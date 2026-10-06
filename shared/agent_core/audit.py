@@ -1,3 +1,4 @@
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -14,6 +15,9 @@ class AuditEvent:
     result: str
     approval_id: str | None = None
     trace_id: str | None = None
+
+def generate_audit_id() -> str:
+    return f"audit-{uuid.uuid4()}"
 
 class AuditService:
 
