@@ -4,6 +4,14 @@ from .agent import GitHubAgent, GITHUB_AGENT_IDENTITY
 from .authentication import EnvironmentTokenProvider, GitHubAuthProvider
 from .gateway import GitHubToolGateway
 from .github_client import GitHubClient, GitHubRESTClient
+from .webhook import (
+    GitHubEventNormalizer,
+    GitHubWebhookHandler,
+    GitHubWebhookSignatureVerifier,
+    InMemoryDeliveryStore,
+    NormalizedGitHubEvent,
+    WebhookResult,
+)
 
 __all__ = [
     "GitHubAgent",
@@ -13,4 +21,10 @@ __all__ = [
     "GitHubToolGateway",
     "GitHubClient",
     "GitHubRESTClient",
+    "GitHubEventNormalizer",
+    "GitHubWebhookHandler",
+    "GitHubWebhookSignatureVerifier",
+    "InMemoryDeliveryStore",
+    "NormalizedGitHubEvent",
+    "WebhookResult",
 ]
