@@ -1,8 +1,4 @@
-"""Initial GitHub specialist agent scaffold.
-
-This module defines domain identity and capabilities only. GitHub event
-transport, API access, and persistence belong to later milestones.
-"""
+"""GitHub specialist agent and its shared-tool-registry integration."""
 
 from typing import Any
 
@@ -16,6 +12,10 @@ from shared.agent_core.identity import AgentIdentity
 from shared.agent_core.memory import Memory
 from shared.agent_core.policy import PolicyEngine
 
+from .authentication import EnvironmentTokenProvider, GitHubAuthProvider
+from .gateway import GitHubToolGateway
+from .github_client import GitHubClient, GitHubRESTClient
+from .tools import create_github_tools
 
 GITHUB_AGENT_IDENTITY = AgentIdentity(
     agent_id="github-agent",
@@ -36,6 +36,10 @@ class GitHubAgent(BaseAgent):
         policy: PolicyEngine,
         audit: AuditService,
         error_handler: ErrorHandler,
+        *,
+        github_gateway: GitHubToolGateway | None = None,
+        github_client: GitHubClient | None = None,
+        auth_provider: GitHubAuthProvider | None = None,
     ) -> None:
         super().__init__(
             identity=GITHUB_AGENT_IDENTITY,
@@ -73,6 +77,17 @@ class GitHubAgent(BaseAgent):
                 ),
             ]
         )
+        if github_gateway is not None and github_client is not None:
+            raise ValueError("Pass github_gateway or github_client, not both.")
+        if github_gateway is None:
+            client = github_client or GitHubRESTClient(
+                auth_provider or EnvironmentTokenProvider()
+            )
+            github_gateway = GitHubToolGateway(client)
+        # Tools live in BaseAgent's registry and are always invoked through
+        # the shared ToolExecutor supplied by the application runtime.
+        for tool in create_github_tools(github_gateway):
+            self.tool_registry.register(tool)
 
     def handle_event(self, event: Any, context: AgentContext) -> dict[str, Any]:
         """Accept an event in memory and return a placeholder result."""

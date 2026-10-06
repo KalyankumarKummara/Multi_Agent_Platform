@@ -74,3 +74,7 @@ class TestGitHubAgent(unittest.TestCase):
 
         self.assertEqual(result, {"status": "request_received", "request": request})
         self.assertIs(context.request, request)
+
+
+if __name__ == "__main__":
+    unittest.main()
