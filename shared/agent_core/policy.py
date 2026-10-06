@@ -19,10 +19,27 @@ class PolicyEngine:
 
     def evaluate(self, action: str, context: Any) -> PolicyResult:
 
-        if action == "read_repository":
+        github_read_actions = {
+            "get_repository",
+            "list_repositories",
+            "get_repository_activity",
+            "list_pull_requests",
+            "get_pull_request",
+            "get_pull_request_files",
+            "get_pull_request_commits",
+            "get_pull_request_reviews",
+            "get_pull_request_review_comments",
+            "list_issues",
+            "get_issue",
+            "get_issue_comments",
+            "list_commits",
+            "get_commit",
+        }
+
+        if action == "read_repository" or action in github_read_actions:
             return PolicyResult(
                 decision=PolicyDecision.ALLOW,
-                reason="Reading repository information is allowed."
+                reason="Reading GitHub repository information is allowed."
             )
 
         if action == "merge_pull_request":
