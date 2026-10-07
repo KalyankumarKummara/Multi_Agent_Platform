@@ -395,11 +395,21 @@ Audit
 
 ## Current status
 
-Milestones 1 through 5.1 are implemented on the GitHub Agent development branch.
+Milestones 1 through 6 are implemented on the GitHub Agent development branch.
 
 The agent foundation, read-only GitHub tools, signed webhook ingestion, FastAPI
 webhook boundary, and activity history are in place. Activity history can use
 the in-memory development store or the MSSQL adapter described below.
+
+### M6 Event Processing & Significance
+
+- `GitHubEventProcessor` deterministically classifies normalized events and
+  assigns low, medium, or high significance using explicit event/action rules.
+- Processing is informational and read-only. No LLM, GitHub write action, or
+  automatic follow-up is performed; `requires_action` remains false.
+- `GitHubAgent` returns the processing summary with the saved activity ID.
+- These rules are initial V1 behavior, not production monitoring or a complete
+  interpretation of every GitHub event action.
 
 The GitHub Agent will be the first specialist agent.
 

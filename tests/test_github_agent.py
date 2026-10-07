@@ -10,6 +10,17 @@ from shared.agent_core.memory import InMemoryStore
 from shared.agent_core.policy import PolicyEngine
 from shared.agent_core.state import AgentStatus
 from github_agent.webhook import GitHubEventNormalizer
+from github_agent.event_processor import GitHubEventProcessor
+
+
+class RecordingEventProcessor:
+    def __init__(self):
+        self.events = []
+        self.processor = GitHubEventProcessor()
+
+    def process(self, event):
+        self.events.append(event)
+        return self.processor.process(event)
 
 
 class TestGitHubAgent(unittest.TestCase):
@@ -59,6 +70,8 @@ class TestGitHubAgent(unittest.TestCase):
         self.assertEqual(context.available_tools, self.agent.tool_registry.list_tools())
 
     def test_handle_event_returns_minimal_result(self):
+        recording_processor = RecordingEventProcessor()
+        self.agent.event_processor = recording_processor
         context = self.agent.create_context()
         event = GitHubEventNormalizer.normalize(
             "delivery-test",
@@ -72,6 +85,11 @@ class TestGitHubAgent(unittest.TestCase):
         result = self.agent.handle_event(event, context)
 
         self.assertEqual(result["status"], "event_processed")
+        self.assertEqual(recording_processor.events, [event])
+        self.assertEqual(result["processing"]["classification"], "repository")
+        self.assertEqual(result["processing"]["significance"], "medium")
+        self.assertFalse(result["processing"]["requires_action"])
+        self.assertIsNone(result["processing"]["recommended_action"])
         self.assertIs(context.event, event)
         activity = self.agent.activity_store.get(result["activity_id"])
         self.assertEqual(activity.event_id, "delivery-test")

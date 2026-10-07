@@ -1,6 +1,7 @@
 """GitHub specialist agent and its shared-tool-registry integration."""
 
 from typing import Any
+from dataclasses import asdict
 
 from shared.agent_core.audit import AuditService
 from shared.agent_core.base_agent import BaseAgent
@@ -16,6 +17,7 @@ from .activity import ActivityRecord, ActivityStore, InMemoryActivityStore
 from .authentication import EnvironmentTokenProvider, GitHubAuthProvider
 from .gateway import GitHubToolGateway
 from .github_client import GitHubClient, GitHubRESTClient
+from .event_processor import EventProcessingResult, GitHubEventProcessor
 from .tools import create_github_tools
 from .webhook import NormalizedGitHubEvent
 
@@ -43,6 +45,7 @@ class GitHubAgent(BaseAgent):
         github_client: GitHubClient | None = None,
         auth_provider: GitHubAuthProvider | None = None,
         activity_store: ActivityStore | None = None,
+        event_processor: GitHubEventProcessor | None = None,
     ) -> None:
         super().__init__(
             identity=GITHUB_AGENT_IDENTITY,
@@ -57,7 +60,7 @@ class GitHubAgent(BaseAgent):
                 AgentCapability(
                     capability_id="github.event_processing",
                     name="GitHub Event Processing",
-                    description="Process normalized GitHub events.",
+                    description="Classify normalized GitHub events and evaluate their significance.",
                     input_schema={"event": "object"},
                     output_schema={"status": "string"},
                     required_permissions=[],
@@ -94,19 +97,27 @@ class GitHubAgent(BaseAgent):
         self.activity_store = (
             activity_store if activity_store is not None else InMemoryActivityStore()
         )
+        self.event_processor = (
+            event_processor if event_processor is not None else GitHubEventProcessor()
+        )
 
     def handle_event(self, event: Any, context: AgentContext) -> dict[str, Any]:
         """Record a normalized GitHub event as successful domain activity."""
         if not isinstance(event, NormalizedGitHubEvent):
             raise ValueError("GitHubAgent requires a normalized GitHub event.")
 
+        processing: EventProcessingResult = self.event_processor.process(event)
         activity = ActivityRecord.from_event(
             event,
             agent_id=self.identity.agent_id,
         )
         self.activity_store.save(activity)
         context.event = event
-        return {"status": "event_processed", "activity_id": activity.activity_id}
+        return {
+            "status": "event_processed",
+            "activity_id": activity.activity_id,
+            "processing": asdict(processing),
+        }
 
     def execute(self, request: Any, context: AgentContext) -> dict[str, Any]:
         """Accept an agent request without performing GitHub operations."""
