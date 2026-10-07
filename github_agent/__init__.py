@@ -2,6 +2,7 @@
 
 from .agent import GitHubAgent, GITHUB_AGENT_IDENTITY
 from .activity import ActivityRecord, ActivityStore, InMemoryActivityStore
+from .activity_query import ActivityQueryError, GitHubActivityQuery
 from .event_processor import EventProcessingResult, GitHubEventProcessor
 from .authentication import EnvironmentTokenProvider, GitHubAuthProvider
 from .gateway import GitHubToolGateway
@@ -20,6 +21,8 @@ __all__ = [
     "ActivityRecord",
     "ActivityStore",
     "InMemoryActivityStore",
+    "ActivityQueryError",
+    "GitHubActivityQuery",
     "EventProcessingResult",
     "GitHubEventProcessor",
     "GITHUB_AGENT_IDENTITY",

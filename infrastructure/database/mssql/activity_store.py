@@ -9,7 +9,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
-from github_agent.activity import ActivityRecord, ActivityStore
+from github_agent.activity import ActivityRecord, ActivityStore, as_utc_datetime
 
 from .models import GitHubActivityModel
 
@@ -76,6 +76,7 @@ class MSSQLActivityStore(ActivityStore):
             occurred_at=_parse_timestamp(activity.occurred_at),
             processed_at=_as_utc(activity.processed_at),
             status=activity.status,
+            significance=activity.significance,
             activity_metadata=_serialize(deepcopy(activity.metadata)),
         )
 
@@ -97,6 +98,7 @@ class MSSQLActivityStore(ActivityStore):
             processed_at=processed_at,
             status=model.status,
             metadata=_deserialize(model.activity_metadata) or {},
+            significance=model.significance,
         )
 
     @staticmethod
@@ -167,7 +169,17 @@ class MSSQLActivityStore(ActivityStore):
         repository: str | None = None,
         event_type: str | None = None,
         status: str | None = None,
+        significance: str | None = None,
+        occurred_at_from: datetime | None = None,
+        occurred_at_to: datetime | None = None,
+        limit: int = 50,
     ) -> list[ActivityRecord]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("limit must be an integer between 1 and 100.")
+        start = as_utc_datetime(occurred_at_from)
+        end = as_utc_datetime(occurred_at_to)
+        if start is not None and end is not None and start > end:
+            raise ValueError("occurred_at_from must not be after occurred_at_to.")
         session = self._sessions()
         try:
             statement = select(GitHubActivityModel)
@@ -177,10 +189,17 @@ class MSSQLActivityStore(ActivityStore):
                 statement = statement.where(GitHubActivityModel.event_type == event_type)
             if status is not None:
                 statement = statement.where(GitHubActivityModel.status == status)
+            if significance is not None:
+                statement = statement.where(GitHubActivityModel.significance == significance)
+            if start is not None:
+                statement = statement.where(GitHubActivityModel.occurred_at >= start)
+            if end is not None:
+                statement = statement.where(GitHubActivityModel.occurred_at <= end)
             statement = statement.order_by(
                 GitHubActivityModel.processed_at.desc(),
                 GitHubActivityModel.activity_id.asc(),
             )
+            statement = statement.limit(limit)
             models = session.scalars(statement).all()
             return [self._to_record(model) for model in models]
         except SQLAlchemyError:

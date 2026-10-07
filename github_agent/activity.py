@@ -11,6 +11,22 @@ import uuid
 from .webhook import NormalizedGitHubEvent
 
 
+def as_utc_datetime(value: datetime | str | None) -> datetime | None:
+    """Parse an activity timestamp and normalize it to UTC."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            raise ValueError("Activity timestamp must be valid ISO-8601.") from None
+    if not isinstance(value, datetime):
+        raise ValueError("Activity timestamp must be a datetime or ISO-8601 string.")
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 @dataclass(frozen=True)
 class ActivityRecord:
     """Minimized, normalized history for one processed GitHub delivery."""
@@ -28,6 +44,7 @@ class ActivityRecord:
     processed_at: datetime
     status: str
     metadata: dict[str, Any] = field(default_factory=dict)
+    significance: str = "low"
 
     @classmethod
     def from_event(
@@ -35,6 +52,7 @@ class ActivityRecord:
         event: NormalizedGitHubEvent,
         *,
         agent_id: str,
+        significance: str = "low",
     ) -> "ActivityRecord":
         """Create a history record from the existing normalized event model."""
         if not isinstance(event, NormalizedGitHubEvent):
@@ -75,6 +93,7 @@ class ActivityRecord:
             processed_at=datetime.now(timezone.utc),
             status="processed",
             metadata=deepcopy(event.metadata),
+            significance=significance,
         )
 
 
@@ -96,6 +115,10 @@ class ActivityStore(ABC):
         repository: str | None = None,
         event_type: str | None = None,
         status: str | None = None,
+        significance: str | None = None,
+        occurred_at_from: datetime | None = None,
+        occurred_at_to: datetime | None = None,
+        limit: int = 50,
     ) -> list[ActivityRecord]:
         """List activities, optionally filtering by common history fields."""
 
@@ -128,7 +151,17 @@ class InMemoryActivityStore(ActivityStore):
         repository: str | None = None,
         event_type: str | None = None,
         status: str | None = None,
+        significance: str | None = None,
+        occurred_at_from: datetime | None = None,
+        occurred_at_to: datetime | None = None,
+        limit: int = 50,
     ) -> list[ActivityRecord]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("limit must be an integer between 1 and 100.")
+        start = as_utc_datetime(occurred_at_from)
+        end = as_utc_datetime(occurred_at_to)
+        if start is not None and end is not None and start > end:
+            raise ValueError("occurred_at_from must not be after occurred_at_to.")
         with self._lock:
             activities = list(self._activities.values())
         if repository is not None:
@@ -140,4 +173,22 @@ class InMemoryActivityStore(ActivityStore):
             activities = [item for item in activities if item.event_type == event_type]
         if status is not None:
             activities = [item for item in activities if item.status == status]
-        return deepcopy(activities)
+        if significance is not None:
+            activities = [item for item in activities if item.significance == significance]
+        if start is not None:
+            activities = [
+                item for item in activities
+                if (occurred := as_utc_datetime(item.occurred_at)) is not None and occurred >= start
+            ]
+        if end is not None:
+            activities = [
+                item for item in activities
+                if (occurred := as_utc_datetime(item.occurred_at)) is not None and occurred <= end
+            ]
+        activities.sort(
+            key=lambda item: (
+                -as_utc_datetime(item.processed_at).timestamp(),
+                item.activity_id,
+            )
+        )
+        return deepcopy(activities[:limit])

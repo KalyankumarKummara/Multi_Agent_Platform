@@ -395,11 +395,41 @@ Audit
 
 ## Current status
 
-Milestones 1 through 6 are implemented on the GitHub Agent development branch.
+Milestones 1 through 7 are implemented on the GitHub Agent development branch.
 
 The agent foundation, read-only GitHub tools, signed webhook ingestion, FastAPI
 webhook boundary, and activity history are in place. Activity history can use
 the in-memory development store or the MSSQL adapter described below.
+
+### M7 Activity History Queries
+
+- `ActivityStore.list_activities()` supports repository, event type, status,
+  significance, occurred-at bounds, and a bounded limit (1–100).
+- `GitHubActivityQuery` validates query inputs and exposes recent, repository,
+  high-significance, and event-type reads. `GitHubAgent.query_activity()` uses
+  this service through dependency injection and returns `ActivityRecord` values.
+- Activity significance is sourced from the existing deterministic M6
+  `EventProcessingResult`; M6 action flags and significance rules are unchanged.
+- In-memory and MSSQL stores return deterministic results ordered by
+  `processed_at DESC, activity_id ASC`. MSSQL also persists and indexes
+  significance, and filters on all supported query fields.
+- Schema initialization makes an additive SQL Server change when upgrading an
+  existing table: it adds non-null `significance` with a `low` default for old
+  rows and adds its index. Fresh schemas also declare a server-side `low`
+  default. The database configuration and embedded ODBC URL are checked for a
+  single `MultiAgentPlatform` target; conflicting database names are rejected.
+  Initialization does not drop or recreate tables. No migration framework was
+  introduced.
+- Querying is read-only, uses only the `ActivityStore` contract, and does not
+  add SQL/database access to the agent. Raw webhook payloads remain excluded.
+- M7 query, agent, MSSQL unit, and regression tests are part of the test suite;
+  the opt-in SQL Server integration test checks the actual database, repeated
+  initialization, schema/index presence, server defaults, significance queries,
+  and targeted test-row cleanup in `MultiAgentPlatform`.
+- First-time schema initialization is sequential and idempotent but is not a
+  distributed/concurrent migration mechanism; simultaneous initializers may
+  race while adding the column or index.
+- No files under `shared/agent_core/` were changed for M7.
 
 ### M6 Event Processing & Significance
 
@@ -442,8 +472,9 @@ The GitHub Agent will be the first specialist agent.
 - Configuration variables are documented in `.env.example`. A full SQLAlchemy
   URL may be supplied through `GITHUB_ACTIVITY_DATABASE_URL`; keep it in a
   secure environment setting, not a committed file.
-- The schema initializer creates only the `github_activities` table if it is
-  missing. It never drops tables or creates databases.
+- The schema initializer creates `github_activities` if missing and applies the
+  documented additive M7 significance column/index update. It never drops
+  tables or creates databases.
 - The local integration test is opt-in:
   `RUN_MSSQL_INTEGRATION_TESTS=1 python -m tests.test_mssql_activity_store_integration`
 - SQLAlchemy 2.x and pyodbc are available in the local virtual environment.

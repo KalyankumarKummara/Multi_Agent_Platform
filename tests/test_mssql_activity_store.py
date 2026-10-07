@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.engine import URL
 from sqlalchemy.orm import Session, sessionmaker
 
 from github_agent.activity import ActivityRecord
@@ -29,6 +30,8 @@ def make_record(
     repository="octo/demo",
     event_type="repository",
     status="processed",
+    significance="medium",
+    occurred_at="2026-10-07T10:00:00+00:00",
 ):
     return ActivityRecord(
         activity_id=activity_id,
@@ -40,10 +43,11 @@ def make_record(
         repository={"name": repository.split("/")[-1], "full_name": repository, "owner": {"login": "octo"}},
         actor={"login": "octocat"},
         target={"type": "repository", "nested": {"key": "value"}},
-        occurred_at="2026-10-07T10:00:00+00:00",
+        occurred_at=occurred_at,
         processed_at=datetime(2026, 10, 7, 10, 1, tzinfo=timezone.utc),
         status=status,
         metadata={"labels": ["one", "two"], "nested": {"enabled": True}},
+        significance=significance,
     )
 
 
@@ -66,6 +70,10 @@ class TestMSSQLActivityStore(unittest.TestCase):
         self.engine.dispose()
 
     def test_activity_record_round_trip_and_nested_json(self):
+        significance_column = GitHubActivityModel.__table__.c.significance
+        self.assertIsNotNone(significance_column.server_default)
+        self.assertEqual(str(significance_column.server_default.arg), "'low'")
+
         record = make_record()
         model = self.store._to_model(record)
         restored = self.store._to_record(model)
@@ -74,6 +82,7 @@ class TestMSSQLActivityStore(unittest.TestCase):
         self.assertEqual(restored.repository["owner"]["login"], "octo")
         self.assertEqual(restored.target["nested"]["key"], "value")
         self.assertEqual(restored.metadata["nested"]["enabled"], True)
+        self.assertEqual(restored.significance, "medium")
         self.assertEqual(model.repository, '{"full_name":"octo/demo","name":"demo","owner":{"login":"octo"}}')
 
     def test_save_get_and_list(self):
@@ -87,9 +96,9 @@ class TestMSSQLActivityStore(unittest.TestCase):
 
     def test_repository_event_type_and_status_filters(self):
         records = [
-            make_record("one", "event-one", repository="octo/demo", event_type="repository", status="processed"),
-            make_record("two", "event-two", repository="octo/other", event_type="push", status="processed"),
-            make_record("three", "event-three", repository="octo/demo", event_type="push", status="failed"),
+            make_record("one", "event-one", repository="octo/demo", event_type="repository", status="processed", significance="high", occurred_at="2026-10-07T09:00:00+00:00"),
+            make_record("two", "event-two", repository="octo/other", event_type="push", status="processed", significance="low", occurred_at="2026-10-07T10:00:00+00:00"),
+            make_record("three", "event-three", repository="octo/demo", event_type="push", status="failed", significance="medium", occurred_at="2026-10-07T11:00:00+00:00"),
         ]
         for record in records:
             self.store.save(record)
@@ -97,6 +106,11 @@ class TestMSSQLActivityStore(unittest.TestCase):
         self.assertEqual(len(self.store.list_activities(repository="octo/demo")), 2)
         self.assertEqual(len(self.store.list_activities(event_type="push")), 2)
         self.assertEqual(len(self.store.list_activities(status="processed")), 2)
+        self.assertEqual([item.activity_id for item in self.store.list_activities(significance="high")], ["one"])
+        self.assertEqual([item.activity_id for item in self.store.list_activities(occurred_at_from=datetime(2026, 10, 7, 10, tzinfo=timezone.utc))], ["three", "two"])
+        self.assertEqual([item.activity_id for item in self.store.list_activities(occurred_at_to=datetime(2026, 10, 7, 10, tzinfo=timezone.utc))], ["one", "two"])
+        self.assertEqual([item.activity_id for item in self.store.list_activities(repository="octo/demo", significance="medium", limit=1)], ["three"])
+        self.assertEqual([item.activity_id for item in self.store.list_activities(limit=2)], ["one", "three"])
         self.assertEqual(
             [(item.activity_id, item.event_type) for item in self.store.list_activities()],
             [("one", "repository"), ("three", "push"), ("two", "push")],
@@ -151,6 +165,27 @@ class TestMSSQLActivityStore(unittest.TestCase):
     def test_managerai_database_is_rejected(self):
         with self.assertRaises(ValueError):
             DatabaseSettings(database="ManagerAI").to_sqlalchemy_url()
+
+    def test_database_target_must_be_multi_agent_platform(self):
+        with self.assertRaises(ValueError):
+            DatabaseSettings(database="OtherDatabase").to_sqlalchemy_url()
+
+    def test_conflicting_url_and_odbc_database_names_are_rejected(self):
+        conflicting_url = URL.create(
+            "mssql+pyodbc",
+            database="MultiAgentPlatform",
+            query={"odbc_connect": "DRIVER={ODBC Driver 18 for SQL Server};DATABASE={ManagerAI}"},
+        ).render_as_string(hide_password=False)
+        with self.assertRaises(ValueError):
+            DatabaseSettings(database_url=conflicting_url).to_sqlalchemy_url()
+
+    def test_custom_url_must_explicitly_target_multi_agent_platform(self):
+        manager_ai_url = URL.create(
+            "mssql+pyodbc",
+            query={"odbc_connect": "DRIVER={ODBC Driver 18 for SQL Server};DATABASE={ManagerAI}"},
+        ).render_as_string(hide_password=False)
+        with self.assertRaises(ValueError):
+            DatabaseSettings(database_url=manager_ai_url).to_sqlalchemy_url()
 
     def test_environment_configuration_and_runtime_store_injection(self):
         with patch.dict(

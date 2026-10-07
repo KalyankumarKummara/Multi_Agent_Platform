@@ -126,6 +126,7 @@ class TestGitHubActivity(unittest.TestCase):
         saved = self.store.get(result["activity_id"])
         self.assertEqual(saved.event_id, event.event_id)
         self.assertEqual(saved.status, "processed")
+        self.assertEqual(saved.significance, "medium")
 
     def test_duplicate_webhook_does_not_create_duplicate_activity(self):
         handler = GitHubWebhookHandler()

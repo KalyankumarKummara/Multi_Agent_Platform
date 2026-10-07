@@ -9,6 +9,7 @@ from github_agent import (
     ActivityStore,
     InMemoryActivityStore,
 )
+from github_agent.activity_query import GitHubActivityQuery
 from shared.agent_core.audit import AuditService
 from shared.agent_core.config import AgentConfig
 from shared.agent_core.error_handler import ErrorHandler
@@ -26,6 +27,7 @@ class GitHubRuntime:
     audit: AuditService
     error_handler: ErrorHandler
     activity_store: ActivityStore
+    activity_query: GitHubActivityQuery
     agent: GitHubAgent
     webhook_handler: GitHubWebhookHandler
 
@@ -42,6 +44,7 @@ def create_github_runtime(
     selected_activity_store = (
         activity_store if activity_store is not None else InMemoryActivityStore()
     )
+    activity_query = GitHubActivityQuery(selected_activity_store)
 
     agent = GitHubAgent(
         config=config,
@@ -50,6 +53,7 @@ def create_github_runtime(
         audit=audit,
         error_handler=error_handler,
         activity_store=selected_activity_store,
+        activity_query=activity_query,
     )
     webhook_handler = GitHubWebhookHandler()
 
@@ -60,6 +64,7 @@ def create_github_runtime(
         audit=audit,
         error_handler=error_handler,
         activity_store=selected_activity_store,
+        activity_query=activity_query,
         agent=agent,
         webhook_handler=webhook_handler,
     )

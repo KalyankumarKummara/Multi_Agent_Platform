@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 import os
 import re
 
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, inspect, text
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -23,20 +23,34 @@ def _environment_bool(name: str, default: bool) -> bool:
     raise ValueError(f"{name} must be set to yes or no.")
 
 
-def _reject_manager_ai(database_name: str | None) -> None:
-    if database_name and database_name.strip().casefold() == "managerai":
-        raise ValueError("The GitHub activity store cannot target the ManagerAI database.")
+ACTIVITY_DATABASE_NAME = "MultiAgentPlatform"
+
+
+def _require_activity_database(database_name: str | None) -> None:
+    if not database_name or database_name.strip().casefold() != ACTIVITY_DATABASE_NAME.casefold():
+        raise ValueError("GitHub activity persistence must target the MultiAgentPlatform database.")
 
 
 def _database_from_url(url: URL) -> str | None:
-    if url.database:
-        return url.database
+    database_names = [url.database] if url.database else []
     odbc_connection = url.query.get("odbc_connect")
+    if odbc_connection is not None and not isinstance(odbc_connection, str):
+        raise ValueError("The ODBC connection string must be valid text.")
     if isinstance(odbc_connection, str):
-        match = re.search(r"(?:^|;)\s*DATABASE\s*=\s*\{?([^;}]+)", odbc_connection, re.IGNORECASE)
-        if match:
-            return match.group(1).strip()
-    return None
+        matches = re.findall(
+            r"(?:^|;)\s*(?:DATABASE|INITIAL\s+CATALOG)\s*=\s*(?:\{([^}]*)\}|([^;]*))",
+            odbc_connection,
+            re.IGNORECASE,
+        )
+        database_names.extend((braced or plain).strip() for braced, plain in matches)
+        if not matches:
+            raise ValueError("The ODBC connection string must specify its target database.")
+    normalized = {name.strip().casefold() for name in database_names if name and name.strip()}
+    if len(normalized) > 1:
+        raise ValueError("Conflicting database names were supplied for GitHub activity persistence.")
+    if not normalized:
+        return None
+    return next(name.strip() for name in database_names if name and name.strip())
 
 
 @dataclass(frozen=True)
@@ -65,9 +79,8 @@ class DatabaseSettings:
             parsed_url = make_url(database_url)
             if parsed_url.drivername != "mssql+pyodbc":
                 raise ValueError("GITHUB_ACTIVITY_DATABASE_URL must use mssql+pyodbc.")
-            _reject_manager_ai(parsed_url.database)
-        else:
-            _reject_manager_ai(database)
+            _require_activity_database(_database_from_url(parsed_url))
+        _require_activity_database(database)
 
         return cls(
             server=server,
@@ -79,11 +92,11 @@ class DatabaseSettings:
 
     def to_sqlalchemy_url(self) -> URL:
         """Build an ODBC URL using Windows Authentication and no credentials."""
+        _require_activity_database(self.database)
         if self.database_url:
             url = make_url(self.database_url)
-            _reject_manager_ai(_database_from_url(url))
+            _require_activity_database(_database_from_url(url))
             return url
-        _reject_manager_ai(self.database)
 
         def odbc_value(value: str) -> str:
             return "{" + value.replace("}", "}}") + "}"
@@ -108,9 +121,9 @@ class DatabaseSettings:
 def create_database_engine(settings: DatabaseSettings | None = None) -> Engine:
     """Create a quiet pooled engine for only the configured activity database."""
     configured = settings or DatabaseSettings.from_environment()
-    _reject_manager_ai(configured.database)
+    _require_activity_database(configured.database)
     url = configured.to_sqlalchemy_url()
-    _reject_manager_ai(_database_from_url(url))
+    _require_activity_database(_database_from_url(url))
     return create_engine(url, pool_pre_ping=True, echo=False)
 
 
@@ -120,9 +133,25 @@ def create_session_factory(engine: Engine) -> sessionmaker[Session]:
 
 
 def initialize_activity_schema(engine: Engine) -> None:
-    """Create the activity table if absent; never drop or recreate objects."""
-    _reject_manager_ai(_database_from_url(engine.url))
+    """Create the table and safely add the M7 significance field if needed."""
+    if engine.dialect.name == "mssql":
+        _require_activity_database(_database_from_url(engine.url))
     ActivityBase.metadata.create_all(
         bind=engine,
         tables=[GitHubActivityModel.__table__],
     )
+    if engine.dialect.name == "mssql":
+        columns = {column["name"] for column in inspect(engine).get_columns("github_activities")}
+        if "significance" not in columns:
+            # Additive compatibility change: existing rows receive the legacy-safe value.
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "ALTER TABLE [github_activities] ADD [significance] "
+                        "NVARCHAR(16) NOT NULL CONSTRAINT "
+                        "[DF_github_activities_significance] DEFAULT 'low' WITH VALUES"
+                    )
+                )
+        for index in GitHubActivityModel.__table__.indexes:
+            if index.name == "ix_github_activities_significance":
+                index.create(bind=engine, checkfirst=True)

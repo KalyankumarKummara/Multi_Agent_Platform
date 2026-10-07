@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Index, String, UnicodeText, UniqueConstraint
+from sqlalchemy import DateTime, Index, String, UnicodeText, UniqueConstraint, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -20,6 +20,7 @@ class GitHubActivityModel(ActivityBase):
         Index("ix_github_activities_event_type", "event_type"),
         Index("ix_github_activities_occurred_at", "occurred_at"),
         Index("ix_github_activities_status", "status"),
+        Index("ix_github_activities_significance", "significance"),
     )
 
     activity_id: Mapped[str] = mapped_column(String(100), primary_key=True)
@@ -35,4 +36,10 @@ class GitHubActivityModel(ActivityBase):
     occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(String(64), nullable=False)
+    significance: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="low",
+        server_default=text("'low'"),
+    )
     activity_metadata: Mapped[str] = mapped_column("metadata", UnicodeText, nullable=False)

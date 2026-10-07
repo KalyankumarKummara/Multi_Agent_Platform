@@ -1,6 +1,7 @@
 """GitHub specialist agent and its shared-tool-registry integration."""
 
 from typing import Any
+from datetime import datetime
 from dataclasses import asdict
 
 from shared.agent_core.audit import AuditService
@@ -14,6 +15,7 @@ from shared.agent_core.memory import Memory
 from shared.agent_core.policy import PolicyEngine
 
 from .activity import ActivityRecord, ActivityStore, InMemoryActivityStore
+from .activity_query import GitHubActivityQuery
 from .authentication import EnvironmentTokenProvider, GitHubAuthProvider
 from .gateway import GitHubToolGateway
 from .github_client import GitHubClient, GitHubRESTClient
@@ -45,6 +47,7 @@ class GitHubAgent(BaseAgent):
         github_client: GitHubClient | None = None,
         auth_provider: GitHubAuthProvider | None = None,
         activity_store: ActivityStore | None = None,
+        activity_query: GitHubActivityQuery | None = None,
         event_processor: GitHubEventProcessor | None = None,
     ) -> None:
         super().__init__(
@@ -97,6 +100,7 @@ class GitHubAgent(BaseAgent):
         self.activity_store = (
             activity_store if activity_store is not None else InMemoryActivityStore()
         )
+        self.activity_query = activity_query or GitHubActivityQuery(self.activity_store)
         self.event_processor = (
             event_processor if event_processor is not None else GitHubEventProcessor()
         )
@@ -110,6 +114,7 @@ class GitHubAgent(BaseAgent):
         activity = ActivityRecord.from_event(
             event,
             agent_id=self.identity.agent_id,
+            significance=processing.significance,
         )
         self.activity_store.save(activity)
         context.event = event
@@ -118,6 +123,28 @@ class GitHubAgent(BaseAgent):
             "activity_id": activity.activity_id,
             "processing": asdict(processing),
         }
+
+    def query_activity(
+        self,
+        *,
+        repository: str | None = None,
+        event_type: str | None = None,
+        status: str | None = None,
+        significance: str | None = None,
+        occurred_at_from: datetime | str | None = None,
+        occurred_at_to: datetime | str | None = None,
+        limit: int = 50,
+    ) -> list[ActivityRecord]:
+        """Return validated, read-only activity history through the domain query service."""
+        return self.activity_query.list_recent_activity(
+            repository=repository,
+            event_type=event_type,
+            status=status,
+            significance=significance,
+            occurred_at_from=occurred_at_from,
+            occurred_at_to=occurred_at_to,
+            limit=limit,
+        )
 
     def execute(self, request: Any, context: AgentContext) -> dict[str, Any]:
         """Accept an agent request without performing GitHub operations."""
