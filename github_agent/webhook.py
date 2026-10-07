@@ -356,7 +356,7 @@ class GitHubWebhookHandler:
                 False,
             )
         event_type = event_type.strip()
-        if event_type not in SUPPORTED_EVENTS:
+        if event_type not in SUPPORTED_EVENTS and event_type != "ping":
             raise AgentError(
                 "WEBHOOK_EVENT_UNSUPPORTED",
                 "GitHub webhook event type is not supported.",
@@ -372,6 +372,13 @@ class GitHubWebhookHandler:
                 False,
             )
         delivery_id = delivery_id.strip()
+
+        # GitHub's ping event is only a connectivity handshake. It shares the
+        # same delivery claim behavior but never enters domain normalization.
+        if event_type == "ping":
+            if not self.delivery_store.claim(delivery_id):
+                return WebhookResult(status="duplicate", delivery_id=delivery_id)
+            return WebhookResult(status="processed", delivery_id=delivery_id)
 
         try:
             payload = json.loads(raw_body)

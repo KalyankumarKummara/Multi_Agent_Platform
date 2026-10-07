@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import unittest
+from unittest.mock import patch
 
 from github_agent import GITHUB_AGENT_IDENTITY, GitHubAgent
 from github_agent.webhook import (
@@ -143,10 +144,50 @@ class TestGitHubWebhook(unittest.TestCase):
         result = self.handle(event_type="repository")
         self.assertEqual(result.status, "processed")
         self.assertEqual(self.received[0][0].event_type, "repository")
-        raw_body, headers = self.request(event_type="ping", delivery_id="unsupported")
+        raw_body, headers = self.request(event_type="deployment", delivery_id="unsupported")
         with self.assertRaises(AgentError) as caught:
             self.handler.handle(raw_body, headers, SECRET, self.agent)
         self.assertEqual(caught.exception.code, "WEBHOOK_EVENT_UNSUPPORTED")
+
+    def test_ping_is_processed_as_a_deduplicated_handshake_only(self):
+        private_marker = "ping-payload-private-marker"
+        raw_body, headers = self.request(
+            event_type="ping",
+            delivery_id="ping-delivery-001",
+            payload={"zen": private_marker, "hook_id": 123},
+        )
+        with patch.object(
+            self.handler.normalizer,
+            "normalize",
+            side_effect=AssertionError("ping must bypass event normalization"),
+        ) as normalize:
+            first = self.handler.handle(raw_body, headers, SECRET, self.agent)
+            duplicate = self.handler.handle(raw_body, headers, SECRET, self.agent)
+
+        self.assertEqual(first.status, "processed")
+        self.assertEqual(first.delivery_id, "ping-delivery-001")
+        self.assertIsNone(first.result)
+        self.assertEqual(duplicate.status, "duplicate")
+        self.assertEqual(duplicate.delivery_id, "ping-delivery-001")
+        self.assertEqual(self.received, [])
+        self.assertEqual(self.agent.activity_store.list_activities(), [])
+        normalize.assert_not_called()
+        self.assertNotIn(private_marker, repr(first))
+        self.assertNotIn(SECRET, repr(first))
+
+    def test_ping_with_invalid_signature_is_rejected(self):
+        raw_body, headers = self.request(
+            event_type="ping",
+            delivery_id="invalid-ping-signature",
+            payload={"zen": "not returned"},
+        )
+        headers["X-Hub-Signature-256"] = "sha256=" + "0" * 64
+
+        with self.assertRaises(AgentError) as caught:
+            self.handler.handle(raw_body, headers, SECRET, self.agent)
+
+        self.assertEqual(caught.exception.code, "WEBHOOK_SIGNATURE_INVALID")
+        self.assertEqual(self.received, [])
 
     def test_malformed_json_and_required_event_fields(self):
         raw_body = b"{"
