@@ -12,10 +12,12 @@ from shared.agent_core.identity import AgentIdentity
 from shared.agent_core.memory import Memory
 from shared.agent_core.policy import PolicyEngine
 
+from .activity import ActivityRecord, ActivityStore, InMemoryActivityStore
 from .authentication import EnvironmentTokenProvider, GitHubAuthProvider
 from .gateway import GitHubToolGateway
 from .github_client import GitHubClient, GitHubRESTClient
 from .tools import create_github_tools
+from .webhook import NormalizedGitHubEvent
 
 GITHUB_AGENT_IDENTITY = AgentIdentity(
     agent_id="github-agent",
@@ -40,6 +42,7 @@ class GitHubAgent(BaseAgent):
         github_gateway: GitHubToolGateway | None = None,
         github_client: GitHubClient | None = None,
         auth_provider: GitHubAuthProvider | None = None,
+        activity_store: ActivityStore | None = None,
     ) -> None:
         super().__init__(
             identity=GITHUB_AGENT_IDENTITY,
@@ -88,11 +91,22 @@ class GitHubAgent(BaseAgent):
         # the shared ToolExecutor supplied by the application runtime.
         for tool in create_github_tools(github_gateway):
             self.tool_registry.register(tool)
+        self.activity_store = (
+            activity_store if activity_store is not None else InMemoryActivityStore()
+        )
 
     def handle_event(self, event: Any, context: AgentContext) -> dict[str, Any]:
-        """Accept an event in memory and return a placeholder result."""
+        """Record a normalized GitHub event as successful domain activity."""
+        if not isinstance(event, NormalizedGitHubEvent):
+            raise ValueError("GitHubAgent requires a normalized GitHub event.")
+
+        activity = ActivityRecord.from_event(
+            event,
+            agent_id=self.identity.agent_id,
+        )
+        self.activity_store.save(activity)
         context.event = event
-        return {"status": "event_received", "event": event}
+        return {"status": "event_processed", "activity_id": activity.activity_id}
 
     def execute(self, request: Any, context: AgentContext) -> dict[str, Any]:
         """Accept an agent request without performing GitHub operations."""

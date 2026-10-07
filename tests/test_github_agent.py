@@ -9,6 +9,7 @@ from shared.agent_core.error_handler import ErrorHandler
 from shared.agent_core.memory import InMemoryStore
 from shared.agent_core.policy import PolicyEngine
 from shared.agent_core.state import AgentStatus
+from github_agent.webhook import GitHubEventNormalizer
 
 
 class TestGitHubAgent(unittest.TestCase):
@@ -59,12 +60,21 @@ class TestGitHubAgent(unittest.TestCase):
 
     def test_handle_event_returns_minimal_result(self):
         context = self.agent.create_context()
-        event = {"type": "pull_request"}
+        event = GitHubEventNormalizer.normalize(
+            "delivery-test",
+            "repository",
+            {
+                "action": "created",
+                "repository": {"name": "demo", "full_name": "octo/demo"},
+            },
+        )
 
         result = self.agent.handle_event(event, context)
 
-        self.assertEqual(result, {"status": "event_received", "event": event})
+        self.assertEqual(result["status"], "event_processed")
         self.assertIs(context.event, event)
+        activity = self.agent.activity_store.get(result["activity_id"])
+        self.assertEqual(activity.event_id, "delivery-test")
 
     def test_execute_returns_minimal_result(self):
         context = self.agent.create_context()

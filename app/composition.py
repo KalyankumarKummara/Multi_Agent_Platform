@@ -2,7 +2,12 @@
 
 from dataclasses import dataclass
 
-from github_agent import GITHUB_AGENT_IDENTITY, GitHubAgent, GitHubWebhookHandler
+from github_agent import (
+    GITHUB_AGENT_IDENTITY,
+    GitHubAgent,
+    GitHubWebhookHandler,
+    InMemoryActivityStore,
+)
 from shared.agent_core.audit import AuditService
 from shared.agent_core.config import AgentConfig
 from shared.agent_core.error_handler import ErrorHandler
@@ -19,6 +24,7 @@ class GitHubRuntime:
     policy: PolicyEngine
     audit: AuditService
     error_handler: ErrorHandler
+    activity_store: InMemoryActivityStore
     agent: GitHubAgent
     webhook_handler: GitHubWebhookHandler
 
@@ -30,6 +36,7 @@ def create_github_runtime() -> GitHubRuntime:
     policy = PolicyEngine()
     audit = AuditService()
     error_handler = ErrorHandler()
+    activity_store = InMemoryActivityStore()
 
     agent = GitHubAgent(
         config=config,
@@ -37,6 +44,7 @@ def create_github_runtime() -> GitHubRuntime:
         policy=policy,
         audit=audit,
         error_handler=error_handler,
+        activity_store=activity_store,
     )
     webhook_handler = GitHubWebhookHandler()
 
@@ -46,6 +54,7 @@ def create_github_runtime() -> GitHubRuntime:
         policy=policy,
         audit=audit,
         error_handler=error_handler,
+        activity_store=activity_store,
         agent=agent,
         webhook_handler=webhook_handler,
     )
