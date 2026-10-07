@@ -4,7 +4,7 @@ import os
 from unittest.mock import patch
 
 from sqlalchemy import create_engine, select
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.engine import URL
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -57,6 +57,23 @@ class CommitFailureSession(Session):
     def commit(self):
         self.flush()
         raise OperationalError("commit", {}, Exception("secret connection information"))
+
+
+class ConcurrentDuplicateSession(Session):
+    """Model another writer winning between the store's pre-check and insert."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._duplicate_check_count = 0
+
+    def scalar(self, statement, *args, **kwargs):
+        self._duplicate_check_count += 1
+        if self._duplicate_check_count == 1:
+            return None
+        return "existing-activity"
+
+    def commit(self):
+        raise IntegrityError("insert", {}, Exception("unique key conflict"))
 
 
 class TestMSSQLActivityStore(unittest.TestCase):
@@ -133,6 +150,17 @@ class TestMSSQLActivityStore(unittest.TestCase):
         duplicate = make_record(event_id="another-event")
         with self.assertRaises(DuplicateActivityError):
             self.store.save(duplicate)
+
+    def test_concurrent_duplicate_insert_is_mapped_to_duplicate_error(self):
+        concurrent_sessions = sessionmaker(
+            bind=self.engine,
+            class_=ConcurrentDuplicateSession,
+            expire_on_commit=False,
+        )
+        concurrent_store = MSSQLActivityStore(concurrent_sessions)
+
+        with self.assertRaises(DuplicateActivityError):
+            concurrent_store.save(make_record())
 
     def test_database_error_rolls_back_and_hides_connection_details(self):
         failing_sessions = sessionmaker(

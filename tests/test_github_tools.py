@@ -1,6 +1,9 @@
 import json
 import os
 import unittest
+from email.message import Message
+from io import BytesIO
+from urllib.error import HTTPError
 from unittest.mock import patch
 
 from github_agent import (
@@ -14,7 +17,7 @@ from shared.agent_core.approval import ApprovalService
 from shared.agent_core.audit import AuditService
 from shared.agent_core.config import AgentConfig
 from shared.agent_core.error_handler import ErrorHandler
-from shared.agent_core.errors import AgentError
+from shared.agent_core.errors import AgentError, ErrorCategory
 from shared.agent_core.memory import InMemoryStore
 from shared.agent_core.policy import PolicyEngine
 from shared.agent_core.security import AuthorizationService, Principal
@@ -63,6 +66,11 @@ class TestGitHubTools(unittest.TestCase):
         self.assertEqual(fake_provider.get_token(), "test-token")
         with patch.dict(os.environ, {"GH_TEST_TOKEN": "injected-test-token"}):
             self.assertEqual(EnvironmentTokenProvider("GH_TEST_TOKEN").get_token(), "injected-test-token")
+        with patch.dict(os.environ, {"GH_TEST_TOKEN": "   "}):
+            with self.assertRaises(AgentError) as caught:
+                EnvironmentTokenProvider("GH_TEST_TOKEN").get_token()
+        self.assertEqual(caught.exception.category, ErrorCategory.CONFIGURATION)
+        self.assertFalse(caught.exception.retryable)
 
     def test_rest_client_constructs_read_request_with_injected_auth(self):
         captured = {}
@@ -90,6 +98,72 @@ class TestGitHubTools(unittest.TestCase):
         self.assertEqual(captured["method"], "GET")
         self.assertEqual(captured["auth"], "Bearer injected-test-token")
 
+    def test_rest_client_retries_transient_get_once(self):
+        calls = []
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return b'{"name":"demo"}'
+
+        def opener(request, timeout):
+            calls.append(request.get_method())
+            if len(calls) == 1:
+                raise HTTPError(request.full_url, 503, "private response details", Message(), BytesIO())
+            return Response()
+
+        client = GitHubRESTClient(
+            MockGitHubAuthProvider(), opener=opener,
+            retry_delay_seconds=0, sleeper=lambda _: None,
+        )
+        self.assertEqual(client.get_repository("octo", "demo"), {"name": "demo"})
+        self.assertEqual(calls, ["GET", "GET"])
+
+    def test_rest_client_does_not_retry_auth_failure_or_leak_token(self):
+        calls = []
+        token = "private-test-token"
+
+        def opener(request, timeout):
+            calls.append(request)
+            raise HTTPError(request.full_url, 401, token, Message(), BytesIO(token.encode()))
+
+        client = GitHubRESTClient(
+            MockGitHubAuthProvider(token), opener=opener,
+            retry_delay_seconds=0, sleeper=lambda _: None,
+        )
+        with self.assertRaises(AgentError) as caught:
+            client.get_repository("octo", "demo")
+        self.assertEqual(caught.exception.code, "GITHUB_AUTHENTICATION_FAILED")
+        self.assertEqual(caught.exception.category, ErrorCategory.AUTHENTICATION)
+        self.assertFalse(caught.exception.retryable)
+        self.assertNotIn(token, str(caught.exception))
+        self.assertEqual(len(calls), 1)
+
+    def test_rest_client_marks_rate_limit_retryable_without_immediate_retry(self):
+        calls = []
+
+        def opener(request, timeout):
+            calls.append(request)
+            headers = Message()
+            headers["X-RateLimit-Remaining"] = "0"
+            raise HTTPError(request.full_url, 403, "rate limited", headers, BytesIO())
+
+        client = GitHubRESTClient(
+            MockGitHubAuthProvider(), opener=opener,
+            retry_delay_seconds=0, sleeper=lambda _: None,
+        )
+        with self.assertRaises(AgentError) as caught:
+            client.get_repository("octo", "demo")
+        self.assertEqual(caught.exception.code, "GITHUB_API_ERROR")
+        self.assertEqual(caught.exception.category, ErrorCategory.EXTERNAL_SERVICE)
+        self.assertTrue(caught.exception.retryable)
+        self.assertEqual(len(calls), 1)
+
     def test_gateway_exposes_all_approved_read_operations(self):
         calls = [
             ("get_repository", ("octo", "demo"), {}),
@@ -114,7 +188,14 @@ class TestGitHubTools(unittest.TestCase):
         self.assertEqual(len(self.client.calls), 14)
 
     def test_gateway_sanitizes_sensitive_response_fields(self):
-        client = MockGitHubClient({"get_repository": {"name": "demo", "token": "secret", "nested": {"password": "hidden"}}})
+        client = MockGitHubClient({
+            "get_repository": {
+                "name": "demo",
+                "token": "secret",
+                "refresh_token": "hidden-token",
+                "nested": {"password": "hidden", "api_secret": "hidden-secret"},
+            }
+        })
         result = GitHubToolGateway(client).get_repository("octo", "demo")
         self.assertEqual(result, {"name": "demo", "nested": {}})
 
@@ -124,6 +205,10 @@ class TestGitHubTools(unittest.TestCase):
         self.assertEqual(tool.permissions, ["github.read"])
         self.assertEqual(tool.risk_level, "low")
         self.assertIsNone(self.agent.tool_registry.get("call_github_api"))
+        self.assertFalse(
+            any("write" in tool.tool_id or "merge" in tool.tool_id
+                for tool in self.agent.tool_registry.list_tools())
+        )
 
     def test_valid_repository_pull_request_issue_and_commit_reads(self):
         self.assertEqual(self.execute("get_repository", {"owner": "octo", "repo": "demo"})["name"], "demo")
@@ -141,6 +226,11 @@ class TestGitHubTools(unittest.TestCase):
             with self.subTest(expected=expected), self.assertRaises(AgentError) as caught:
                 self.executor.execute(tool, args, self.context)
             self.assertEqual(caught.exception.code, expected)
+
+    def test_gateway_rejects_wrong_direct_input_type(self):
+        with self.assertRaises(AgentError) as caught:
+            self.gateway.get_repository(12, "demo")
+        self.assertEqual(caught.exception.code, "INVALID_FIELD_TYPE")
 
     def test_authorization_denied_without_github_read_permission(self):
         denied_context = ToolExecutionContext(

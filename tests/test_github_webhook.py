@@ -114,6 +114,18 @@ class TestGitHubWebhook(unittest.TestCase):
             self.handler.handle(altered, headers, SECRET, self.agent)
         self.assertEqual(caught.exception.code, "WEBHOOK_SIGNATURE_INVALID")
 
+    def test_signature_is_verified_before_json_parsing(self):
+        raw_body = b"{malformed-private-body"
+        headers = {
+            "X-GitHub-Event": "repository",
+            "X-GitHub-Delivery": "bad-signature-first",
+            "X-Hub-Signature-256": "sha256=" + "0" * 64,
+        }
+        with self.assertRaises(AgentError) as caught:
+            self.handler.handle(raw_body, headers, SECRET, self.agent)
+        self.assertEqual(caught.exception.code, "WEBHOOK_SIGNATURE_INVALID")
+        self.assertNotIn(raw_body.decode(), str(caught.exception))
+
     def test_missing_event_and_delivery_headers(self):
         raw_body, headers = self.request()
         headers.pop("X-GitHub-Event")
@@ -196,6 +208,7 @@ class TestGitHubWebhook(unittest.TestCase):
         with self.assertRaises(AgentError) as caught:
             self.handler.handle(raw_body, headers, SECRET, self.agent)
         self.assertEqual(caught.exception.code, "WEBHOOK_AGENT_PROCESSING_FAILED")
+        self.assertTrue(caught.exception.retryable)
         self.assertNotIn(SECRET, str(caught.exception))
         self.assertNotIn("payload", str(caught.exception))
 

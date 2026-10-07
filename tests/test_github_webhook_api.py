@@ -11,6 +11,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.api.webhooks.github import create_github_webhook_router
 from app.composition import create_github_runtime
+from github_agent import InMemoryActivityStore
 
 
 WEBHOOK_SECRET = "unit-test-webhook-secret"
@@ -32,7 +33,7 @@ def valid_payload():
 
 class TestGitHubWebhookAPI(unittest.TestCase):
     def setUp(self):
-        self.runtime = create_github_runtime()
+        self.runtime = create_github_runtime(activity_store=InMemoryActivityStore())
         self.received_events = []
         self.runtime.agent.handle_event = (
             lambda event, context: self.received_events.append(event) or {"processed": True}
@@ -135,6 +136,29 @@ class TestGitHubWebhookAPI(unittest.TestCase):
         self.assertNotIn(body.decode(), response.text)
         self.assertNotIn(WEBHOOK_SECRET, response.text)
         self.assertEqual(self.received_events, [])
+
+    def test_retryable_processing_failure_can_be_retried_safely(self):
+        body = json.dumps(valid_payload()).encode("utf-8")
+        original_handler = self.runtime.agent.handle_event
+        attempt = 0
+
+        def fail_once(event, context):
+            nonlocal attempt
+            attempt += 1
+            if attempt == 1:
+                raise RuntimeError(f"private token {WEBHOOK_SECRET}; payload {body.decode()}")
+            return original_handler(event, context)
+
+        self.runtime.agent.handle_event = fail_once
+        first = self.post(body, delivery="retry-api-delivery")
+        second = self.post(body, delivery="retry-api-delivery")
+
+        self.assertEqual(first.status_code, 503)
+        self.assertNotIn(WEBHOOK_SECRET, first.text)
+        self.assertNotIn(body.decode(), first.text)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(second.json()["status"], "processed")
+        self.assertEqual(len(self.received_events), 1)
 
 
 if __name__ == "__main__":

@@ -27,8 +27,17 @@ ACTIVITY_DATABASE_NAME = "MultiAgentPlatform"
 
 
 def _require_activity_database(database_name: str | None) -> None:
-    if not database_name or database_name.strip().casefold() != ACTIVITY_DATABASE_NAME.casefold():
+    if (
+        not isinstance(database_name, str)
+        or not database_name.strip()
+        or database_name.strip().casefold() != ACTIVITY_DATABASE_NAME.casefold()
+    ):
         raise ValueError("GitHub activity persistence must target the MultiAgentPlatform database.")
+
+
+def _require_setting(name: str, value: str) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} must not be empty.")
 
 
 def _database_from_url(url: URL) -> str | None:
@@ -70,6 +79,8 @@ class DatabaseSettings:
         server = os.environ.get("GITHUB_ACTIVITY_DB_SERVER", "localhost")
         database = os.environ.get("GITHUB_ACTIVITY_DB_NAME", "MultiAgentPlatform")
         driver = os.environ.get("GITHUB_ACTIVITY_DB_DRIVER", "ODBC Driver 18 for SQL Server")
+        _require_setting("GITHUB_ACTIVITY_DB_SERVER", server)
+        _require_setting("GITHUB_ACTIVITY_DB_DRIVER", driver)
         trust_certificate = _environment_bool(
             "GITHUB_ACTIVITY_DB_TRUST_SERVER_CERTIFICATE",
             default=True,
@@ -93,6 +104,8 @@ class DatabaseSettings:
     def to_sqlalchemy_url(self) -> URL:
         """Build an ODBC URL using Windows Authentication and no credentials."""
         _require_activity_database(self.database)
+        _require_setting("GITHUB_ACTIVITY_DB_SERVER", self.server)
+        _require_setting("GITHUB_ACTIVITY_DB_DRIVER", self.driver)
         if self.database_url:
             url = make_url(self.database_url)
             _require_activity_database(_database_from_url(url))

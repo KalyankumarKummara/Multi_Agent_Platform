@@ -395,7 +395,7 @@ Audit
 
 ## Current status
 
-Milestones 1 through 7 are implemented on the GitHub Agent development branch.
+Milestones 1 through 8 are implemented on the GitHub Agent development branch.
 
 The agent foundation, read-only GitHub tools, signed webhook ingestion, FastAPI
 webhook boundary, and activity history are in place. Activity history can use
@@ -430,6 +430,49 @@ the in-memory development store or the MSSQL adapter described below.
   distributed/concurrent migration mechanism; simultaneous initializers may
   race while adding the column or index.
 - No files under `shared/agent_core/` were changed for M7.
+
+### M8 Final V1 Hardening and Acceptance
+
+- Webhook signatures are verified against the exact raw body before JSON
+  parsing. Required headers and supported event types are validated; malformed
+  requests do not claim delivery IDs. Processing failures release the claim so
+  the same delivery can be retried. Responses and errors do not echo payloads,
+  signatures, secrets, or internal exceptions.
+- Webhook delivery claims are atomic within one process. The MSSQL event ID
+  unique constraint remains the persistent duplicate guard, and concurrent
+  unique-key conflicts are reported as duplicates. Distributed idempotency is
+  intentionally outside V1.
+- Only successfully processed events are saved as activities. Failed processing
+  returns a safe retryable error and creates no false `processed` row; delivery
+  retry is the recovery path. Persisted activity records currently represent
+  processed events rather than a durable failed-event log.
+- The GitHub REST adapter has fixed-purpose read-only GET methods. Transient
+  connection, timeout, HTTP 408, and server errors receive one bounded retry;
+  authentication/configuration failures are not retried. Rate-limit responses
+  are marked retryable and returned without immediate retry so callers can
+  honor server backoff. No write operations are exposed.
+- GitHub tokens and webhook secrets are supplied through environment settings;
+  blank settings fail safely, sensitive response keys are filtered, and error
+  messages omit request credentials and response bodies. The webhook secret is
+  required to process requests; `GITHUB_TOKEN` is optional for public reads.
+- MSSQL remains parameterized through SQLAlchemy and is restricted to
+  `MultiAgentPlatform`; conflicting URL-path and ODBC database names are
+  rejected. Activity persistence rolls back and closes sessions on failures,
+  retains event-ID uniqueness, and stores only normalized/minimized fields.
+  M7 significance defaults and additive schema behavior remain in place.
+- The deterministic V1 end-to-end test exercises signed payload verification,
+  normalization, M6 classification/significance, activity storage, duplicate
+  delivery handling, and M7 querying without live GitHub access.
+- Regression modules and all 14 common-foundation test modules passed. The
+  opt-in SQL Server integration test passed against `MultiAgentPlatform`; it
+  checked the connected database, repeat initialization, significance column
+  and index, server default, filters, and cleanup of only test rows.
+- Schema initialization is sequential and idempotent, not a distributed
+  concurrent migration mechanism. Other intentional V1 limits include
+  process-local webhook claims, no GitHub write actions, no Agent Coordinator,
+  no LLM reasoning, and no autonomous high-impact actions.
+
+**GitHub Agent V1 is complete after M8.**
 
 ### M6 Event Processing & Significance
 

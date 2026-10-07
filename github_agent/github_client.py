@@ -2,6 +2,7 @@
 
 from abc import ABC, abstractmethod
 import json
+import time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
@@ -69,10 +70,14 @@ class GitHubRESTClient(GitHubClient):
         *,
         timeout_seconds: float = 10.0,
         opener=urlopen,
+        retry_delay_seconds: float = 0.2,
+        sleeper=time.sleep,
     ) -> None:
         self._auth_provider = auth_provider
         self._timeout_seconds = timeout_seconds
         self._opener = opener
+        self._retry_delay_seconds = max(0.0, retry_delay_seconds)
+        self._sleeper = sleeper
 
     @staticmethod
     def _segment(value: str) -> str:
@@ -95,34 +100,72 @@ class GitHubRESTClient(GitHubClient):
         if token:
             headers["Authorization"] = f"Bearer {token}"
         request = Request(url, headers=headers, method="GET")
-        try:
-            with self._opener(request, timeout=self._timeout_seconds) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except HTTPError as error:
-            status = error.code
-            category = ErrorCategory.AUTHENTICATION if status in (401, 403) else ErrorCategory.EXTERNAL_SERVICE
-            code = "GITHUB_AUTHENTICATION_FAILED" if status in (401, 403) else "GITHUB_API_ERROR"
-            raise AgentError(
-                code=code,
-                message=f"GitHub API returned HTTP {status}.",
-                category=category,
-                retryable=status >= 500 or status == 429,
-                details={"status": status},
-            ) from None
-        except URLError as error:
-            raise AgentError(
-                code="GITHUB_CONNECTION_FAILED",
-                message="Could not connect to the GitHub API.",
-                category=ErrorCategory.EXTERNAL_SERVICE,
-                retryable=True,
-            ) from None
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            raise AgentError(
-                code="GITHUB_INVALID_RESPONSE",
-                message="GitHub API returned an invalid JSON response.",
-                category=ErrorCategory.EXTERNAL_SERVICE,
-                retryable=True,
-            ) from None
+        # This is a bounded retry for idempotent GETs only. Authentication and
+        # rate-limit failures are surfaced for the caller to retry later.
+        for attempt in range(2):
+            try:
+                with self._opener(request, timeout=self._timeout_seconds) as response:
+                    try:
+                        return json.loads(response.read().decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        raise AgentError(
+                            code="GITHUB_INVALID_RESPONSE",
+                            message="GitHub API returned an invalid JSON response.",
+                            category=ErrorCategory.EXTERNAL_SERVICE,
+                            retryable=True,
+                        ) from None
+            except AgentError as error:
+                if error.code == "GITHUB_INVALID_RESPONSE" and attempt == 0:
+                    self._sleeper(self._retry_delay_seconds)
+                    continue
+                raise
+            except HTTPError as error:
+                status = error.code
+                response_headers = error.headers or {}
+                rate_limited = status == 429 or (
+                    status == 403
+                    and (
+                        response_headers.get("X-RateLimit-Remaining") == "0"
+                        or response_headers.get("Retry-After") is not None
+                    )
+                )
+                error.close()
+                retryable = rate_limited or status == 408 or status >= 500
+                if status in (401, 403) and not rate_limited:
+                    category = ErrorCategory.AUTHENTICATION
+                    code = "GITHUB_AUTHENTICATION_FAILED"
+                else:
+                    category = ErrorCategory.EXTERNAL_SERVICE
+                    code = "GITHUB_API_ERROR"
+                # Honor server-directed backoff by surfacing rate limits rather
+                # than retrying them immediately inside this synchronous client.
+                if (status == 408 or status >= 500) and attempt == 0:
+                    self._sleeper(self._retry_delay_seconds)
+                    continue
+                raise AgentError(
+                    code=code,
+                    message=f"GitHub API returned HTTP {status}.",
+                    category=category,
+                    retryable=retryable,
+                    details={"status": status},
+                ) from None
+            except (URLError, TimeoutError, OSError):
+                if attempt == 0:
+                    self._sleeper(self._retry_delay_seconds)
+                    continue
+                raise AgentError(
+                    code="GITHUB_CONNECTION_FAILED",
+                    message="Could not connect to the GitHub API.",
+                    category=ErrorCategory.EXTERNAL_SERVICE,
+                    retryable=True,
+                ) from None
+
+        raise AgentError(
+            code="GITHUB_CONNECTION_FAILED",
+            message="Could not connect to the GitHub API.",
+            category=ErrorCategory.EXTERNAL_SERVICE,
+            retryable=True,
+        ) from None
 
     def get_repository(self, owner: str, repo: str) -> Any:
         return self._get(f"/repos/{self._segment(owner)}/{self._segment(repo)}")

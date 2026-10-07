@@ -14,7 +14,7 @@ class GitHubToolGateway:
     provide one place to normalize inputs and remove sensitive response keys.
     """
 
-    _SENSITIVE_KEYS = {"authorization", "access_token", "token", "password", "client_secret"}
+    _SENSITIVE_KEY_PARTS = ("authorization", "token", "password", "secret")
 
     def __init__(self, client: GitHubClient) -> None:
         self._client = client
@@ -25,7 +25,7 @@ class GitHubToolGateway:
             return {
                 key: cls._sanitize(item)
                 for key, item in value.items()
-                if str(key).lower() not in cls._SENSITIVE_KEYS
+                if not any(part in str(key).casefold() for part in cls._SENSITIVE_KEY_PARTS)
             }
         if isinstance(value, list):
             return [cls._sanitize(item) for item in value]
@@ -33,6 +33,14 @@ class GitHubToolGateway:
 
     @staticmethod
     def _name(value: str, field: str) -> str:
+        if not isinstance(value, str):
+            raise AgentError(
+                code="INVALID_FIELD_TYPE",
+                message=f"{field} must be a string.",
+                category=ErrorCategory.VALIDATION,
+                retryable=False,
+                details={"field": field, "expected_type": "string"},
+            )
         normalized = value.strip()
         if not normalized:
             raise AgentError(

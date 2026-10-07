@@ -11,6 +11,7 @@ from shared.agent_core.error_handler import ErrorHandler
 from shared.agent_core.errors import AgentError
 from shared.agent_core.memory import InMemoryStore
 from shared.agent_core.policy import PolicyEngine
+from infrastructure.database.mssql.activity_store import ActivityPersistenceError
 
 
 SECRET = "activity-tests-webhook-secret"
@@ -59,6 +60,18 @@ def make_agent(store=None):
 class FailingActivityStore(InMemoryActivityStore):
     def save(self, activity):
         raise RuntimeError("simulated activity storage failure")
+
+
+class FailOnceDatabaseActivityStore(InMemoryActivityStore):
+    def __init__(self):
+        super().__init__()
+        self.fail_next_save = True
+
+    def save(self, activity):
+        if self.fail_next_save:
+            self.fail_next_save = False
+            raise ActivityPersistenceError("GitHub activity database operation failed.")
+        return super().save(activity)
 
 
 class TestGitHubActivity(unittest.TestCase):
@@ -160,6 +173,24 @@ class TestGitHubActivity(unittest.TestCase):
                 handler.handle(body, headers, SECRET, failing_agent)
             self.assertEqual(caught.exception.code, "WEBHOOK_AGENT_PROCESSING_FAILED")
             self.assertEqual(failing_store.list_activities(), [])
+
+    def test_database_failure_releases_delivery_for_retry(self):
+        database_store = FailOnceDatabaseActivityStore()
+        database_agent, _ = make_agent(database_store)
+        handler = GitHubWebhookHandler()
+        body, headers = self.signed_request(
+            "database-retry-delivery", "repository", repository_payload()
+        )
+
+        with self.assertRaises(AgentError) as caught:
+            handler.handle(body, headers, SECRET, database_agent)
+        self.assertEqual(caught.exception.code, "WEBHOOK_AGENT_PROCESSING_FAILED")
+        self.assertTrue(caught.exception.retryable)
+        self.assertEqual(database_store.list_activities(), [])
+
+        result = handler.handle(body, headers, SECRET, database_agent)
+        self.assertEqual(result.status, "processed")
+        self.assertEqual(len(database_store.list_activities()), 1)
 
     def test_only_normalized_minimized_data_is_stored(self):
         event = self.normalize("safe-delivery", payload=repository_payload())

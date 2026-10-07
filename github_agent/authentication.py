@@ -21,7 +21,14 @@ class EnvironmentTokenProvider(GitHubAuthProvider):
     """Reads a token from a named environment variable on demand."""
 
     def __init__(self, variable_name: str = "GITHUB_TOKEN") -> None:
-        self.variable_name = variable_name
+        if not isinstance(variable_name, str) or not variable_name.strip():
+            raise AgentError(
+                code="GITHUB_AUTH_CONFIGURATION_ERROR",
+                message="GitHub token environment variable name is invalid.",
+                category=ErrorCategory.CONFIGURATION,
+                retryable=False,
+            )
+        self.variable_name = variable_name.strip()
 
     def get_token(self) -> str | None:
         token = os.environ.get(self.variable_name)
