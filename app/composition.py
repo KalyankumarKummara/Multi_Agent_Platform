@@ -6,6 +6,7 @@ from github_agent import (
     GITHUB_AGENT_IDENTITY,
     GitHubAgent,
     GitHubWebhookHandler,
+    ActivityStore,
     InMemoryActivityStore,
 )
 from shared.agent_core.audit import AuditService
@@ -24,19 +25,23 @@ class GitHubRuntime:
     policy: PolicyEngine
     audit: AuditService
     error_handler: ErrorHandler
-    activity_store: InMemoryActivityStore
+    activity_store: ActivityStore
     agent: GitHubAgent
     webhook_handler: GitHubWebhookHandler
 
 
-def create_github_runtime() -> GitHubRuntime:
-    """Construct the GitHub agent and its webhook ingestion service."""
+def create_github_runtime(
+    activity_store: ActivityStore | None = None,
+) -> GitHubRuntime:
+    """Build a runtime, defaulting to memory or accepting another store."""
     config = AgentConfig(identity=GITHUB_AGENT_IDENTITY)
     memory = InMemoryStore()
     policy = PolicyEngine()
     audit = AuditService()
     error_handler = ErrorHandler()
-    activity_store = InMemoryActivityStore()
+    selected_activity_store = (
+        activity_store if activity_store is not None else InMemoryActivityStore()
+    )
 
     agent = GitHubAgent(
         config=config,
@@ -44,7 +49,7 @@ def create_github_runtime() -> GitHubRuntime:
         policy=policy,
         audit=audit,
         error_handler=error_handler,
-        activity_store=activity_store,
+        activity_store=selected_activity_store,
     )
     webhook_handler = GitHubWebhookHandler()
 
@@ -54,7 +59,7 @@ def create_github_runtime() -> GitHubRuntime:
         policy=policy,
         audit=audit,
         error_handler=error_handler,
-        activity_store=activity_store,
+        activity_store=selected_activity_store,
         agent=agent,
         webhook_handler=webhook_handler,
     )

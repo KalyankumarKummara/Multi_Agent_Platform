@@ -1,6 +1,6 @@
 # Multi-Agent Platform — Project Status
 
-Last Updated: 2026-10-06
+Last Updated: 2026-10-07
 
 ## 1. Project Overview
 
@@ -395,7 +395,11 @@ Audit
 
 ## Current status
 
-Planning / initial development.
+Milestones 1 through 5.1 are implemented on the GitHub Agent development branch.
+
+The agent foundation, read-only GitHub tools, signed webhook ingestion, FastAPI
+webhook boundary, and activity history are in place. Activity history can use
+the in-memory development store or the MSSQL adapter described below.
 
 The GitHub Agent will be the first specialist agent.
 
@@ -411,6 +415,34 @@ The GitHub Agent will be the first specialist agent.
 - Handle failures and retries
 - Maintain activity history
 - Demonstrate automatic activity detection
+
+### M5.1 MSSQL activity persistence
+
+- Dedicated database: `MultiAgentPlatform` (SQL Server 2025 Developer Edition).
+- `ManagerAI` is a separate database and is not used by the GitHub activity store.
+- `MSSQLActivityStore` implements the existing `ActivityStore` abstraction with
+  SQLAlchemy 2.x and pyodbc; `InMemoryActivityStore` remains the default for tests.
+- The `github_activities` table stores normalized activity fields and serialized
+  minimized dictionaries, never the raw webhook body. The delivery/event ID is
+  unique, with indexes for repository, event type, occurrence time, and status.
+- Local Windows development uses Windows Authentication, ODBC Driver 18, and
+  `TrustServerCertificate=yes`. Set
+  `GITHUB_ACTIVITY_DB_TRUST_SERVER_CERTIFICATE=no` when certificate validation
+  is available; do not use the development trust setting as a production default.
+- Configuration variables are documented in `.env.example`. A full SQLAlchemy
+  URL may be supplied through `GITHUB_ACTIVITY_DATABASE_URL`; keep it in a
+  secure environment setting, not a committed file.
+- The schema initializer creates only the `github_activities` table if it is
+  missing. It never drops tables or creates databases.
+- The local integration test is opt-in:
+  `RUN_MSSQL_INTEGRATION_TESTS=1 python -m tests.test_mssql_activity_store_integration`
+- SQLAlchemy 2.x and pyodbc are available in the local virtual environment.
+  This repository currently has no dependency manifest; declare these packages
+  in one when a project-wide install workflow is established.
+
+Current persistence remains synchronous and uses in-memory webhook idempotency.
+Cross-process delivery coordination, database migrations, and deployment secrets
+management remain future work.
 
 ### Initial event categories
 
