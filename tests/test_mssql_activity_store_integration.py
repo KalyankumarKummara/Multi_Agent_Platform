@@ -8,7 +8,7 @@ import uuid
 from sqlalchemy import delete, inspect, text
 
 from github_agent.activity import ActivityRecord
-from infrastructure.database.mssql.activity_store import DuplicateActivityError, MSSQLActivityStore
+from infrastructure.database.mssql.activity_store import MSSQLActivityStore
 from infrastructure.database.mssql.connection import (
     DatabaseSettings,
     create_database_engine,
@@ -165,8 +165,9 @@ class TestMSSQLActivityStoreIntegration(unittest.TestCase):
             duplicate = ActivityRecord(
                 **{**activity.__dict__, "activity_id": f"activity-integration-duplicate-{uuid.uuid4()}"}
             )
-            with self.assertRaises(DuplicateActivityError):
-                store.save(duplicate)
+            retried = store.save(duplicate)
+            self.assertEqual(retried.activity_id, activity_id)
+            self.assertEqual(retried.event_id, event_id)
         finally:
             # Delete only rows uniquely identified by this test's activity IDs.
             if schema_initialized:

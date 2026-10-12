@@ -98,6 +98,29 @@ class TestGitHubTools(unittest.TestCase):
         self.assertEqual(captured["method"], "GET")
         self.assertEqual(captured["auth"], "Bearer injected-test-token")
 
+    def test_rest_client_lists_branches_using_fixed_read_endpoint(self):
+        captured = {}
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return b'[{"name":"main"}]'
+
+        def opener(request, timeout):
+            captured["url"] = request.full_url
+            captured["method"] = request.get_method()
+            return Response()
+
+        client = GitHubRESTClient(MockGitHubAuthProvider(), opener=opener)
+        self.assertEqual(client.list_branches("octo", "demo", per_page=5), [{"name": "main"}])
+        self.assertEqual(captured["url"], "https://api.github.com/repos/octo/demo/branches?per_page=5")
+        self.assertEqual(captured["method"], "GET")
+
     def test_rest_client_retries_transient_get_once(self):
         calls = []
 
@@ -169,6 +192,7 @@ class TestGitHubTools(unittest.TestCase):
             ("get_repository", ("octo", "demo"), {}),
             ("list_repositories", (), {}),
             ("get_repository_activity", ("octo", "demo"), {}),
+            ("list_branches", ("octo", "demo"), {}),
             ("list_pull_requests", ("octo", "demo"), {}),
             ("get_pull_request", ("octo", "demo", 7), {}),
             ("get_pull_request_files", ("octo", "demo", 7), {}),
@@ -185,7 +209,7 @@ class TestGitHubTools(unittest.TestCase):
             with self.subTest(operation=operation):
                 result = getattr(self.gateway, operation)(*args, **kwargs)
                 self.assertIsNotNone(result)
-        self.assertEqual(len(self.client.calls), 14)
+        self.assertEqual(len(self.client.calls), 15)
 
     def test_gateway_sanitizes_sensitive_response_fields(self):
         client = MockGitHubClient({
@@ -200,7 +224,7 @@ class TestGitHubTools(unittest.TestCase):
         self.assertEqual(result, {"name": "demo", "nested": {}})
 
     def test_tool_registration_and_lookup(self):
-        self.assertEqual(len(self.agent.tool_registry.list_tools()), 14)
+        self.assertEqual(len(self.agent.tool_registry.list_tools()), 15)
         tool = self.agent.tool_registry.get("get_repository")
         self.assertEqual(tool.permissions, ["github.read"])
         self.assertEqual(tool.risk_level, "low")

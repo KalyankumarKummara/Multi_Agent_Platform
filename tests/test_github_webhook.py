@@ -63,6 +63,8 @@ def payload_for(event_type="repository"):
         return result
     if event_type == "create":
         return {**base, "ref": "feature", "ref_type": "branch", "master_branch": "main"}
+    if event_type == "delete":
+        return {**base, "ref": "feature", "ref_type": "branch"}
     return base
 
 
@@ -208,6 +210,7 @@ class TestGitHubWebhook(unittest.TestCase):
             ("repository", "repository_action"),
             ("push", "ref"),
             ("create", "ref"),
+            ("delete", "ref"),
             ("pull_request", "pull_request"),
             ("pull_request_review", "review"),
             ("pull_request_review_comment", "comment"),
@@ -224,6 +227,24 @@ class TestGitHubWebhook(unittest.TestCase):
                 self.assertEqual(event.actor["login"], "octocat")
                 self.assertNotIn("body", repr(event.metadata))
                 self.assertNotIn("private@example.test", repr(event.metadata))
+
+    def test_branch_create_delete_and_created_push_keep_distinct_event_data(self):
+        create = GitHubEventNormalizer.normalize("create-id", "create", payload_for("create"))
+        deleted = GitHubEventNormalizer.normalize("delete-id", "delete", payload_for("delete"))
+        push_data = {**payload_for("push"), "created": True, "deleted": False, "commits": []}
+        push_data["ref"] = "refs/heads/feature"
+        push = GitHubEventNormalizer.normalize("push-id", "push", push_data)
+
+        self.assertIsNone(create.occurred_at)
+        self.assertEqual(create.metadata["ref"], "feature")
+        self.assertEqual(create.metadata["ref_type"], "branch")
+        self.assertEqual(push.event_type, "push")
+        self.assertEqual(push.metadata["created"], True)
+        self.assertEqual(push.metadata["deleted"], False)
+        self.assertEqual(push.metadata["ref"], "refs/heads/feature")
+        self.assertEqual(deleted.event_type, "delete")
+        self.assertEqual(deleted.metadata["ref"], "feature")
+        self.assertEqual(deleted.metadata["ref_type"], "branch")
 
     def test_idempotency_first_duplicate_and_reset(self):
         first = self.handle(delivery_id="same-delivery")

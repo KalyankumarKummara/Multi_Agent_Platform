@@ -30,6 +30,7 @@ class GitHubEventProcessor:
         "repository": "repository",
         "push": "push",
         "create": "branch_or_tag",
+        "delete": "branch_or_tag",
         "pull_request": "pull_request",
         "pull_request_review": "pull_request_review",
         "pull_request_review_comment": "pull_request_review_comment",
@@ -72,6 +73,15 @@ class GitHubEventProcessor:
                 significance, reason = "medium", "Tag created."
             else:
                 reason = "Reference creation activity recorded."
+
+        elif event.event_type == "delete":
+            ref_type = metadata.get("ref_type")
+            if ref_type == "branch":
+                significance, reason = "medium", "Branch deleted."
+            elif ref_type == "tag":
+                significance, reason = "medium", "Tag deleted."
+            else:
+                reason = "Reference deletion activity recorded."
 
         elif event.event_type == "pull_request":
             pull_request = metadata.get("pull_request")

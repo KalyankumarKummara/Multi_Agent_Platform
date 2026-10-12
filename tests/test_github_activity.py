@@ -151,6 +151,36 @@ class TestGitHubActivity(unittest.TestCase):
         self.assertEqual(second.status, "duplicate")
         self.assertEqual(len(self.store.list_activities()), 1)
 
+    def test_persisted_delivery_retry_is_idempotent_after_handler_restart(self):
+        first_handler = GitHubWebhookHandler()
+        retry_handler = GitHubWebhookHandler()
+        payload = push_payload()
+
+        self.deliver(first_handler, "restart-retry-id", "push", payload)
+        retried = self.deliver(retry_handler, "restart-retry-id", "push", payload)
+
+        self.assertEqual(retried.status, "processed")
+        self.assertEqual(len(self.store.list_activities()), 1)
+        self.assertEqual(self.store.list_activities()[0].event_id, "restart-retry-id")
+
+    def test_identical_push_details_with_distinct_delivery_ids_are_preserved(self):
+        handler = GitHubWebhookHandler()
+        payload = {
+            **push_payload(),
+            "head_commit": {"timestamp": "2026-01-01T00:00:00Z"},
+        }
+
+        self.deliver(handler, "similar-push-one", "push", payload)
+        self.deliver(handler, "similar-push-two", "push", payload)
+
+        activities = self.store.list_activities()
+        self.assertEqual(len(activities), 2)
+        self.assertEqual({item.event_id for item in activities}, {"similar-push-one", "similar-push-two"})
+        self.assertEqual({item.event_type for item in activities}, {"push"})
+        self.assertEqual({item.occurred_at for item in activities}, {"2026-01-01T00:00:00Z"})
+        self.assertEqual(activities[0].repository, activities[1].repository)
+        self.assertEqual(activities[0].actor, activities[1].actor)
+
     def test_different_events_create_separate_activity_records(self):
         handler = GitHubWebhookHandler()
         self.deliver(handler, "repository-delivery", "repository", repository_payload())
@@ -162,6 +192,30 @@ class TestGitHubActivity(unittest.TestCase):
             {activity.event_id for activity in activities},
             {"repository-delivery", "push-delivery"},
         )
+
+    def test_create_and_push_for_same_branch_persist_separately_with_retry_idempotency(self):
+        handler = GitHubWebhookHandler()
+        create_payload = {"repository": push_payload()["repository"], "ref": "feature", "ref_type": "branch"}
+        branch_push = {**push_payload(), "ref": "refs/heads/feature", "created": True, "deleted": False, "commits": []}
+        self.deliver(handler, "branch-create-id", "create", create_payload)
+        self.deliver(handler, "branch-push-id", "push", branch_push)
+        self.deliver(handler, "branch-create-id", "create", create_payload)
+
+        activities = self.store.list_activities()
+        self.assertEqual(len(activities), 2)
+        self.assertEqual({item.event_type for item in activities}, {"create", "push"})
+        create = next(item for item in activities if item.event_type == "create")
+        self.assertIsNone(create.occurred_at)
+        self.assertEqual(create.metadata["ref_type"], "branch")
+        self.assertIsNotNone(create.processed_at)
+
+    def test_delete_branch_is_persisted(self):
+        handler = GitHubWebhookHandler()
+        payload = {"repository": push_payload()["repository"], "ref": "feature", "ref_type": "branch"}
+        self.deliver(handler, "branch-delete-id", "delete", payload)
+        activity = self.store.list_activities()[0]
+        self.assertEqual(activity.event_type, "delete")
+        self.assertEqual(activity.metadata, {"ref": "feature", "ref_type": "branch"})
 
     def test_failed_processing_does_not_record_success_and_can_retry(self):
         failing_agent, failing_store = make_agent(FailingActivityStore())

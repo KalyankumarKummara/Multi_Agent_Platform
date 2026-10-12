@@ -68,7 +68,7 @@ class ConcurrentDuplicateSession(Session):
 
     def scalar(self, statement, *args, **kwargs):
         self._duplicate_check_count += 1
-        if self._duplicate_check_count == 1:
+        if self._duplicate_check_count in {1, 2, 3}:
             return None
         return "existing-activity"
 
@@ -133,14 +133,14 @@ class TestMSSQLActivityStore(unittest.TestCase):
             [("one", "repository"), ("three", "push"), ("two", "push")],
         )
 
-    def test_duplicate_event_id_is_rejected_without_overwriting(self):
+    def test_duplicate_event_id_returns_existing_record_without_overwriting(self):
         original = make_record()
         self.store.save(original)
         duplicate = make_record("activity-2", original.event_id)
 
-        with self.assertRaises(DuplicateActivityError):
-            self.store.save(duplicate)
+        saved = self.store.save(duplicate)
 
+        self.assertEqual(saved, original)
         activities = self.store.list_activities()
         self.assertEqual(len(activities), 1)
         self.assertEqual(activities[0].activity_id, original.activity_id)

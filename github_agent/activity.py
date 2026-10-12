@@ -68,7 +68,7 @@ class ActivityRecord:
         elif event.event_type in {"issues", "issue_comment"}:
             issue = event.metadata.get("issue", {})
             target = {"type": "issue", "number": issue.get("number")}
-        elif event.event_type in {"push", "create"}:
+        elif event.event_type in {"push", "create", "delete"}:
             target = {
                 "type": event.metadata.get("ref_type", "ref"),
                 "ref": event.metadata.get("ref"),
@@ -134,6 +134,12 @@ class InMemoryActivityStore(ActivityStore):
         if not isinstance(activity, ActivityRecord):
             raise TypeError("Only ActivityRecord values can be saved.")
         with self._lock:
+            existing = next(
+                (item for item in self._activities.values() if item.event_id == activity.event_id),
+                None,
+            )
+            if existing is not None:
+                return deepcopy(existing)
             if activity.activity_id in self._activities:
                 raise ValueError("Activity ID already exists.")
             stored = deepcopy(activity)

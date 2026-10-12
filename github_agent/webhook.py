@@ -21,6 +21,7 @@ SUPPORTED_EVENTS = frozenset(
         "repository",
         "push",
         "create",
+        "delete",
         "pull_request",
         "pull_request_review",
         "pull_request_review_comment",
@@ -225,10 +226,10 @@ class GitHubEventNormalizer:
             head_commit = payload.get("head_commit")
             if isinstance(head_commit, dict) and isinstance(head_commit.get("timestamp"), str):
                 occurred_at = head_commit["timestamp"]
-        elif event_type == "create":
+        elif event_type in {"create", "delete"}:
             metadata["ref"] = cls._text(payload, "ref")
             metadata["ref_type"] = cls._text(payload, "ref_type")
-            if isinstance(payload.get("master_branch"), str):
+            if event_type == "create" and isinstance(payload.get("master_branch"), str):
                 metadata["master_branch"] = payload["master_branch"]
         elif event_type in ("pull_request", "pull_request_review", "pull_request_review_comment"):
             pull = cls._mapping(payload, "pull_request")

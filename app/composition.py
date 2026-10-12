@@ -9,11 +9,15 @@ from github_agent import (
     ActivityStore,
 )
 from github_agent.activity_query import GitHubActivityQuery
+from shared.agent_core.approval import ApprovalService
 from shared.agent_core.audit import AuditService
 from shared.agent_core.config import AgentConfig
 from shared.agent_core.error_handler import ErrorHandler
 from shared.agent_core.memory import InMemoryStore
 from shared.agent_core.policy import PolicyEngine
+from shared.agent_core.security import AuthorizationService
+from shared.agent_core.tools.executor import ToolExecutor
+from shared.agent_core.validation import InputValidator
 from infrastructure.database.mssql.activity_store import MSSQLActivityStore
 from infrastructure.database.mssql.connection import (
     DatabaseSettings,
@@ -31,6 +35,10 @@ class GitHubRuntime:
     memory: InMemoryStore
     policy: PolicyEngine
     audit: AuditService
+    authorization: AuthorizationService
+    approval: ApprovalService
+    input_validator: InputValidator
+    tool_executor: ToolExecutor
     error_handler: ErrorHandler
     activity_store: ActivityStore
     activity_query: GitHubActivityQuery
@@ -46,6 +54,16 @@ def create_github_runtime(
     memory = InMemoryStore()
     policy = PolicyEngine()
     audit = AuditService()
+    authorization = AuthorizationService()
+    approval = ApprovalService()
+    input_validator = InputValidator()
+    tool_executor = ToolExecutor(
+        authorization_service=authorization,
+        policy_engine=policy,
+        approval_service=approval,
+        audit_service=audit,
+        input_validator=input_validator,
+    )
     error_handler = ErrorHandler()
     if activity_store is not None:
         selected_activity_store = activity_store
@@ -73,6 +91,10 @@ def create_github_runtime(
         memory=memory,
         policy=policy,
         audit=audit,
+        authorization=authorization,
+        approval=approval,
+        input_validator=input_validator,
+        tool_executor=tool_executor,
         error_handler=error_handler,
         activity_store=selected_activity_store,
         activity_query=activity_query,

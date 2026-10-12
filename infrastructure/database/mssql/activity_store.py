@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import json
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -111,15 +111,20 @@ class MSSQLActivityStore(ActivityStore):
 
         session = self._sessions()
         try:
-            duplicate = session.scalar(
-                select(GitHubActivityModel.activity_id).where(
-                    or_(
-                        GitHubActivityModel.activity_id == activity.activity_id,
-                        GitHubActivityModel.event_id == activity.event_id,
-                    )
+            existing_event = session.scalar(
+                select(GitHubActivityModel).where(
+                    GitHubActivityModel.event_id == activity.event_id
                 )
             )
-            if duplicate is not None:
+            if existing_event is not None:
+                return self._to_record(existing_event)
+
+            duplicate_activity = session.scalar(
+                select(GitHubActivityModel.activity_id).where(
+                    GitHubActivityModel.activity_id == activity.activity_id
+                )
+            )
+            if duplicate_activity is not None:
                 raise DuplicateActivityError("Activity or event ID already exists.")
 
             session.add(self._to_model(activity))
@@ -133,17 +138,24 @@ class MSSQLActivityStore(ActivityStore):
             # A concurrent insert may win after the pre-check; inspect only
             # the two unique keys to distinguish that case from DB failure.
             try:
-                duplicate = session.scalar(
-                    select(GitHubActivityModel.activity_id).where(
-                        or_(
-                            GitHubActivityModel.activity_id == activity.activity_id,
-                            GitHubActivityModel.event_id == activity.event_id,
-                        )
+                existing_event = session.scalar(
+                    select(GitHubActivityModel).where(
+                        GitHubActivityModel.event_id == activity.event_id
                     )
                 )
             except SQLAlchemyError:
                 self._raise_database_error()
-            if duplicate is not None:
+            if existing_event is not None:
+                return self._to_record(existing_event)
+            try:
+                duplicate_activity = session.scalar(
+                    select(GitHubActivityModel.activity_id).where(
+                        GitHubActivityModel.activity_id == activity.activity_id
+                    )
+                )
+            except SQLAlchemyError:
+                self._raise_database_error()
+            if duplicate_activity is not None:
                 raise DuplicateActivityError("Activity or event ID already exists.") from None
             self._raise_database_error()
         except SQLAlchemyError:

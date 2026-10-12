@@ -26,6 +26,9 @@ class GitHubClient(ABC):
     def get_repository_activity(self, owner: str, repo: str, **options: Any) -> Any: ...
 
     @abstractmethod
+    def list_branches(self, owner: str, repo: str, **options: Any) -> Any: ...
+
+    @abstractmethod
     def list_pull_requests(self, owner: str, repo: str, **options: Any) -> Any: ...
 
     @abstractmethod
@@ -178,6 +181,9 @@ class GitHubRESTClient(GitHubClient):
 
     def get_repository_activity(self, owner: str, repo: str, **options: Any) -> Any:
         return self._get(f"/repos/{self._segment(owner)}/{self._segment(repo)}/events", **options)
+
+    def list_branches(self, owner: str, repo: str, **options: Any) -> Any:
+        return self._get(f"/repos/{self._segment(owner)}/{self._segment(repo)}/branches", **options)
 
     def list_pull_requests(self, owner: str, repo: str, **options: Any) -> Any:
         return self._get(f"/repos/{self._segment(owner)}/{self._segment(repo)}/pulls", **options)

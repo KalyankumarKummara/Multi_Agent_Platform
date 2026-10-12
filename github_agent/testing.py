@@ -21,6 +21,7 @@ class MockGitHubClient:
             "get_repository": {"name": "demo", "full_name": "octo/demo"},
             "list_repositories": [{"name": "demo", "full_name": "octo/demo"}],
             "get_repository_activity": [],
+            "list_branches": [{"name": "main", "protected": False}],
             "list_pull_requests": [],
             "get_pull_request": {"number": 7, "title": "Example PR"},
             "get_pull_request_files": [],

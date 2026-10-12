@@ -116,7 +116,7 @@ class GitHubAgent(BaseAgent):
             agent_id=self.identity.agent_id,
             significance=processing.significance,
         )
-        self.activity_store.save(activity)
+        activity = self.activity_store.save(activity)
         context.event = event
         return {
             "status": "event_processed",

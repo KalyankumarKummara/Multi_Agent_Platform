@@ -134,6 +134,10 @@ class GitHubToolGateway:
         options = self._options(options, "per_page", "page")
         return self._call("get_repository_activity", *self._repo_args(owner, repo), **options)
 
+    def list_branches(self, owner: str, repo: str, **options: Any) -> Any:
+        options = self._options(options, "per_page", "page")
+        return self._call("list_branches", *self._repo_args(owner, repo), **options)
+
     def list_pull_requests(self, owner: str, repo: str, **options: Any) -> Any:
         options = self._options(options, "state", "per_page", "page", "base", "head", "sort", "direction")
         return self._call("list_pull_requests", *self._repo_args(owner, repo), **options)

@@ -23,6 +23,7 @@ class PolicyEngine:
             "get_repository",
             "list_repositories",
             "get_repository_activity",
+            "list_branches",
             "list_pull_requests",
             "get_pull_request",
             "get_pull_request_files",

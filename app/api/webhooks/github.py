@@ -28,12 +28,22 @@ def _error_response(error: AgentError) -> JSONResponse:
 
 
 def create_github_webhook_router(runtime: GitHubRuntime | None = None) -> APIRouter:
-    """Create the route with a composed runtime, injectable for local tests."""
-    selected_runtime = runtime or create_github_runtime()
+    """Create the route with an injected or app-lifespan runtime."""
     router = APIRouter()
 
     @router.post("/webhooks/github")
     async def receive_github_webhook(request: Request) -> JSONResponse:
+        selected_runtime = runtime or getattr(
+            request.app.state,
+            "github_runtime",
+            None,
+        )
+        if selected_runtime is None:
+            # Preserve standalone-router behavior while delaying construction
+            # until a request actually needs the runtime.
+            selected_runtime = create_github_runtime()
+            request.app.state.github_runtime = selected_runtime
+
         # Preserve the exact bytes: GitHubWebhookHandler verifies this body
         # before decoding or parsing it.
         raw_body = await request.body()
