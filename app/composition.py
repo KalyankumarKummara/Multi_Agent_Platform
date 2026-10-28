@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 
+from app.services.github_request_service import GitHubRequestService
 from github_agent import (
     GITHUB_AGENT_IDENTITY,
     GitHubAgent,
@@ -43,6 +44,7 @@ class GitHubRuntime:
     activity_store: ActivityStore
     activity_query: GitHubActivityQuery
     agent: GitHubAgent
+    github_request_service: GitHubRequestService
     webhook_handler: GitHubWebhookHandler
 
 
@@ -84,6 +86,10 @@ def create_github_runtime(
         activity_store=selected_activity_store,
         activity_query=activity_query,
     )
+    github_request_service = GitHubRequestService(
+        tool_registry=agent.tool_registry,
+        tool_executor=tool_executor,
+    )
     webhook_handler = GitHubWebhookHandler()
 
     return GitHubRuntime(
@@ -99,5 +105,6 @@ def create_github_runtime(
         activity_store=selected_activity_store,
         activity_query=activity_query,
         agent=agent,
+        github_request_service=github_request_service,
         webhook_handler=webhook_handler,
     )

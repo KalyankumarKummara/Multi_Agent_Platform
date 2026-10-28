@@ -223,6 +223,53 @@ class TestGitHubTools(unittest.TestCase):
         result = GitHubToolGateway(client).get_repository("octo", "demo")
         self.assertEqual(result, {"name": "demo", "nested": {}})
 
+    def test_gateway_logs_only_safe_agent_error_fields(self):
+        secret_detail = "Authorization: Bearer private-token api-key=private-key"
+
+        class FailingClient:
+            def get_repository(self, owner, repo):
+                raise AgentError(
+                    code="GITHUB_API_ERROR",
+                    message=secret_detail,
+                    category=ErrorCategory.EXTERNAL_SERVICE,
+                    retryable=True,
+                    details={"status": 404, "private_detail": secret_detail},
+                )
+
+        gateway = GitHubToolGateway(FailingClient())
+        with self.assertLogs("github_agent.gateway", level="ERROR") as captured:
+            with self.assertRaises(AgentError):
+                gateway.get_repository("octo", "demo")
+
+        logs = "\n".join(captured.output)
+        self.assertIn("operation=get_repository", logs)
+        self.assertIn("error_code=GITHUB_API_ERROR", logs)
+        self.assertIn("category=external_service", logs)
+        self.assertIn("retryable=True", logs)
+        self.assertIn("http_status=404", logs)
+        self.assertNotIn(secret_detail, logs)
+        self.assertNotIn("private-token", logs)
+        self.assertNotIn("private-key", logs)
+
+    def test_gateway_logs_only_operation_and_exception_type_for_unexpected_errors(self):
+        secret_detail = "private URL query and Authorization: Bearer private-token"
+
+        class FailingClient:
+            def get_repository(self, owner, repo):
+                raise RuntimeError(secret_detail)
+
+        gateway = GitHubToolGateway(FailingClient())
+
+        with self.assertLogs("github_agent.gateway", level="ERROR") as captured:
+            with self.assertRaises(AgentError):
+                gateway.get_repository("octo", "demo")
+
+        logs = "\n".join(captured.output)
+        self.assertIn("operation=get_repository", logs)
+        self.assertIn("exception_type=RuntimeError", logs)
+        self.assertNotIn(secret_detail, logs)
+        self.assertNotIn("private-token", logs)
+
     def test_tool_registration_and_lookup(self):
         self.assertEqual(len(self.agent.tool_registry.list_tools()), 15)
         tool = self.agent.tool_registry.get("get_repository")

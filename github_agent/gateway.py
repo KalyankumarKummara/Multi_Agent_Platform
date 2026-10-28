@@ -1,10 +1,15 @@
 """Narrow domain gateway between GitHub tools and the injected API client."""
 
+import logging
+import re
 from typing import Any
 
 from shared.agent_core.errors import AgentError, ErrorCategory
 
 from .github_client import GitHubClient
+
+
+logger = logging.getLogger(__name__)
 
 
 class GitHubToolGateway:
@@ -107,10 +112,41 @@ class GitHubToolGateway:
     def _call(self, method: str, *args: Any, **kwargs: Any) -> Any:
         try:
             return self._sanitize(getattr(self._client, method)(*args, **kwargs))
-        except AgentError:
+        except AgentError as error:
+            details = error.details if isinstance(error.details, dict) else {}
+            status = details.get("status")
+            if not isinstance(status, int) or isinstance(status, bool) or not 100 <= status <= 599:
+                status = None
+            code = error.code
+            if not isinstance(code, str) or re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", code) is None:
+                code = "unknown"
+            category = (
+                error.category.value
+                if isinstance(error.category, ErrorCategory)
+                else "unknown"
+            )
+            retryable = error.retryable if isinstance(error.retryable, bool) else "unknown"
+            operation = method if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,79}", method) else "unknown"
+            logger.error(
+                "GitHub client operation failed operation=%s error_code=%s category=%s retryable=%s http_status=%s",
+                operation,
+                code,
+                category,
+                retryable,
+                status if status is not None else "unknown",
+            )
             raise
         except Exception as error:
             # Do not echo exception text: HTTP libraries may include request data.
+            operation = method if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,79}", method) else "unknown"
+            exception_type = type(error).__name__
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,79}", exception_type) is None:
+                exception_type = "unknown"
+            logger.error(
+                "GitHub client operation failed operation=%s exception_type=%s",
+                operation,
+                exception_type,
+            )
             raise AgentError(
                 code="GITHUB_CLIENT_ERROR",
                 message="The GitHub client failed to complete the read operation.",
