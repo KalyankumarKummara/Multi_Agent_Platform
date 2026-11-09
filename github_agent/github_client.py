@@ -29,6 +29,9 @@ class GitHubClient(ABC):
     def list_branches(self, owner: str, repo: str, **options: Any) -> Any: ...
 
     @abstractmethod
+    def list_contributors(self, owner: str, repo: str, **options: Any) -> Any: ...
+
+    @abstractmethod
     def list_pull_requests(self, owner: str, repo: str, **options: Any) -> Any: ...
 
     @abstractmethod
@@ -48,6 +51,9 @@ class GitHubClient(ABC):
 
     @abstractmethod
     def list_issues(self, owner: str, repo: str, **options: Any) -> Any: ...
+
+    @abstractmethod
+    def search_issues(self, query: str, **options: Any) -> Any: ...
 
     @abstractmethod
     def get_issue(self, owner: str, repo: str, issue_number: int) -> Any: ...
@@ -185,6 +191,9 @@ class GitHubRESTClient(GitHubClient):
     def list_branches(self, owner: str, repo: str, **options: Any) -> Any:
         return self._get(f"/repos/{self._segment(owner)}/{self._segment(repo)}/branches", **options)
 
+    def list_contributors(self, owner: str, repo: str, **options: Any) -> Any:
+        return self._get(f"/repos/{self._segment(owner)}/{self._segment(repo)}/contributors", **options)
+
     def list_pull_requests(self, owner: str, repo: str, **options: Any) -> Any:
         return self._get(f"/repos/{self._segment(owner)}/{self._segment(repo)}/pulls", **options)
 
@@ -205,6 +214,9 @@ class GitHubRESTClient(GitHubClient):
 
     def list_issues(self, owner: str, repo: str, **options: Any) -> Any:
         return self._get(f"/repos/{self._segment(owner)}/{self._segment(repo)}/issues", **options)
+
+    def search_issues(self, query: str, **options: Any) -> Any:
+        return self._get("/search/issues", q=query, **options)
 
     def get_issue(self, owner: str, repo: str, issue_number: int) -> Any:
         return self._get(f"/repos/{self._segment(owner)}/{self._segment(repo)}/issues/{issue_number}")

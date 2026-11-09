@@ -9,6 +9,7 @@ from github_agent import (
     GitHubWebhookHandler,
     ActivityStore,
 )
+from github_agent.github_client import GitHubClient
 from github_agent.activity_query import GitHubActivityQuery
 from shared.agent_core.approval import ApprovalService
 from shared.agent_core.audit import AuditService
@@ -50,8 +51,10 @@ class GitHubRuntime:
 
 def create_github_runtime(
     activity_store: ActivityStore | None = None,
+    *,
+    github_client: GitHubClient | None = None,
 ) -> GitHubRuntime:
-    """Build a runtime using MSSQL by default or an explicitly supplied store."""
+    """Build a runtime using MSSQL by default or explicitly supplied dependencies."""
     config = AgentConfig(identity=GITHUB_AGENT_IDENTITY)
     memory = InMemoryStore()
     policy = PolicyEngine()
@@ -85,6 +88,7 @@ def create_github_runtime(
         error_handler=error_handler,
         activity_store=selected_activity_store,
         activity_query=activity_query,
+        github_client=github_client,
     )
     github_request_service = GitHubRequestService(
         tool_registry=agent.tool_registry,

@@ -62,6 +62,71 @@ class TestGitHubAskAPI(unittest.TestCase):
         self.assertEqual(self.runtime.audit.list_events()[-1].result, "success")
         create_runtime.assert_not_called()
 
+    def test_greeting_returns_friendly_existing_response_shape_without_external_calls(self):
+        response = self.request("POST", "/github/ask", json={"message": "Hello!"})
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(set(body), {"status", "message"})
+        self.assertEqual(body["status"], "unsupported")
+        self.assertIn("Hello!", body["message"])
+        self.assertEqual(self.groq.prompts, [])
+        self.assertEqual(self.client.calls, [])
+
+    def test_message_only_pull_request_request_uses_default_repository_and_keeps_response_shape(self):
+        self.runtime.github_request_service = GitHubRequestService(
+            groq_service=self.groq,
+            tool_registry=self.runtime.agent.tool_registry,
+            tool_executor=self.runtime.tool_executor,
+            default_owner="KalyankumarKummara",
+            default_repo="github-agent-test",
+        )
+        self.groq.response = llm_response(
+            "github_read",
+            "list_pull_requests",
+            {"owner": "untrusted-model-owner", "repo": "untrusted-model-repo", "state": "open"},
+        )
+        response = self.request(
+            "POST",
+            "/github/ask",
+            json={"message": "Show me the open pull requests"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["status"], "success")
+        self.assertEqual(body["tool_id"], "list_pull_requests")
+        self.assertEqual(body["answer"], self.groq.answer)
+        self.assertIn("result", body)
+        self.assertEqual(
+            self.client.calls[-1],
+            (
+                "list_pull_requests",
+                ("KalyankumarKummara", "github-agent-test"),
+                {"state": "open"},
+            ),
+        )
+
+    def test_conflicting_repository_mentions_return_clarification_without_tool_execution(self):
+        self.groq.response = llm_response(
+            "github_read",
+            "list_pull_requests",
+            {"owner": "octo", "repo": "demo", "state": "open"},
+        )
+
+        response = self.request(
+            "POST",
+            "/github/ask",
+            json={"message": "Show open pull requests in octo/demo and acme/service"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["status"], "clarification_required")
+        self.assertIn("single repository", body["message"].casefold())
+        self.assertEqual(self.groq.prompts, [])
+        self.assertEqual(self.client.calls, [])
+
     def test_answer_generation_failure_returns_safe_error_and_keeps_reads_only(self):
         self.groq.answer_error = TimeoutError("private model detail")
 
@@ -167,6 +232,33 @@ class TestGitHubAskAPI(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
         self.assertEqual(self.groq.prompts, [])
+
+    def test_missing_message_invalid_json_and_malformed_types_are_rejected(self):
+        responses = [
+            self.request("POST", "/github/ask", json={}),
+            self.request("POST", "/github/ask", content="{invalid json", headers={"content-type": "application/json"}),
+            self.request("POST", "/github/ask", json={"message": 42}),
+            self.request("POST", "/github/ask", json={"message": None}),
+        ]
+
+        self.assertEqual([response.status_code for response in responses], [422, 422, 422, 422])
+        self.assertEqual(self.groq.prompts, [])
+        self.assertEqual(self.client.calls, [])
+
+    def test_unexpected_service_exception_returns_safe_error(self):
+        secret_detail = "private path D:\\internal\\agent.py token=do-not-leak"
+
+        def fail(_message):
+            raise RuntimeError(secret_detail)
+
+        self.runtime.github_request_service.process = fail
+        response = self.request("POST", "/github/ask", json={"message": "List branches"})
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json(), {"detail": "The GitHub request could not be completed."})
+        self.assertNotIn(secret_detail, response.text)
+        self.assertNotIn("internal", response.text)
+        self.assertEqual(self.client.calls, [])
 
     def test_route_does_not_construct_a_runtime_when_state_is_missing(self):
         app = FastAPI()
